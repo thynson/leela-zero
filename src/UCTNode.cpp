@@ -311,6 +311,10 @@ float UCTNode::get_eval(int tomove) const {
     }
 }
 
+double UCTNode::get_whiteevals() const {
+    return m_visits - m_blackevals - m_virtual_loss;
+}
+
 double UCTNode::get_blackevals() const {
     return m_blackevals;
 }
@@ -373,18 +377,19 @@ public:
     NodeComp(int color) : m_color(color) {};
     bool operator()(const UCTNode::node_ptr_t& a,
                     const UCTNode::node_ptr_t& b) {
-        // if visits are not same, sort on visits
-        if (a->get_visits() != b->get_visits()) {
-            return a->get_visits() < b->get_visits();
-        }
-
         // neither has visits, sort on prior score
-        if (a->get_visits() == 0) {
+        if (a->get_visits() == 0 && b->get_visits() == 0) {
             return a->get_score() < b->get_score();
         }
 
-        // both have same non-zero number of visits
-        return a->get_eval(m_color) < b->get_eval(m_color);
+        // Compare blackeval or whiteeval respectively, instead of visit count
+        // In theory this let the sorting choose the branch with most expected
+        // winning position, which in rare case don't have the most visit count
+        if (m_color == FastBoard::BLACK) {
+            return a->get_blackevals() < b->get_blackevals();
+        } else {
+            return a->get_whiteevals() < b->get_whiteevals();
+        }
     }
 private:
     int m_color;

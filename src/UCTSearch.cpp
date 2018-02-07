@@ -189,9 +189,11 @@ void UCTSearch::dump_stats(KoState & state, UCTNode & parent) {
 
         std::string tmp = state.move_to_text(node->get_move());
         std::string pvstring(tmp);
+        auto mcts_eval = color == FastBoard::BLACK ? node->get_blackevals() : node->get_whiteevals();
 
-        myprintf("%4s -> %7d (V: %5.2f%%) (N: %5.2f%%) PV: ",
+        myprintf("%4s -> %7.2f/%-5d (V: %5.2f%%) (N: %5.2f%%) PV: ",
             tmp.c_str(),
+            mcts_eval,
             node->get_visits(),
             node->get_eval(color)*100.0f,
             node->get_score() * 100.0f);
@@ -400,9 +402,11 @@ void UCTSearch::dump_analysis(int playouts) {
     int color = tempstate.board.get_to_move();
 
     std::string pvstring = get_pv(tempstate, *m_root);
-    float winrate = 100.0f * m_root->get_eval(color);
-    myprintf("Playouts: %d, Win: %5.2f%%, PV: %s\n",
-             playouts, winrate, pvstring.c_str());
+    auto winrate = 100.0f * m_root->get_eval(color);
+    auto visit = m_root->get_visits();
+    auto mcts_eval = color == FastBoard::BLACK ? m_root->get_blackevals() : m_root->get_whiteevals();
+    myprintf("Playouts: %7d, Win: %5.2f/%-5d = %5.2f%%, PV: %s\n",
+             playouts, mcts_eval, visit, winrate, pvstring.c_str());
 }
 
 bool UCTSearch::is_running() const {
