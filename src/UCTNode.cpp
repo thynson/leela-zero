@@ -312,7 +312,7 @@ float UCTNode::get_eval(int tomove) const {
 }
 
 double UCTNode::get_whiteevals() const {
-    return m_visits - m_blackevals - m_virtual_loss;
+    return m_visits - m_blackevals;
 }
 
 double UCTNode::get_blackevals() const {
