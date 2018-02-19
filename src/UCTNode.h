@@ -30,12 +30,15 @@
 #include "Network.h"
 #include "SMP.h"
 
-class UCTNode {
+class UCTNode final {
 public:
     // When we visit a node, add this amount of virtual losses
     // to it to encourage other CPUs to explore other parts of the
     // search tree.
     static constexpr auto VIRTUAL_LOSS_COUNT = 3;
+
+    void *operator new (std::size_t);
+    void operator delete (void *);
 
     using node_ptr_t = std::unique_ptr<UCTNode>;
 
@@ -74,6 +77,7 @@ public:
     void sort_children(int color);
     UCTNode& get_best_root_child(int color);
     SMP::Mutex& get_mutex();
+
 
 private:
     void link_nodelist(std::atomic<int>& nodecount,
