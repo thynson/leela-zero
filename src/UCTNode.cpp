@@ -31,6 +31,8 @@
 #include <utility>
 #include <vector>
 
+#include <boost/pool/singleton_pool.hpp>
+
 #include "UCTNode.h"
 #include "FastBoard.h"
 #include "FastState.h"
@@ -43,6 +45,20 @@
 #include "Utils.h"
 
 using namespace Utils;
+
+namespace {
+    using node_allocator_t = boost::pool<boost::default_user_allocator_new_delete>;
+    node_allocator_t node_allocator{sizeof(UCTNode), 4096};
+}
+
+void *UCTNode::operator new (std::size_t s) {
+    assert(s == sizeof(UCTNode));
+    return node_allocator.malloc();
+}
+
+void UCTNode::operator delete (void *p) {
+    node_allocator.free(p);
+}
 
 UCTNode::UCTNode(int vertex, float score, float init_eval)
     : m_move(vertex), m_score(score), m_init_eval(init_eval) {
@@ -444,3 +460,5 @@ void UCTNode::invalidate() {
 bool UCTNode::valid() const {
     return m_valid;
 }
+
+
