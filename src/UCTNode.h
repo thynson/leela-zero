@@ -25,12 +25,18 @@
 #include <memory>
 #include <vector>
 
+#include <boost/intrusive/slist.hpp>
+
 #include "GameState.h"
 #include "Network.h"
 #include "SMP.h"
 
-class UCTNode final {
+using UCTNodeHook = boost::intrusive::slist_base_hook<
+            boost::intrusive::constant_time_size<true>>;
+
+class UCTNode final : public UCTNodeHook {
 public:
+    using List = boost::intrusive::slist<UCTNode, boost::intrusive::base_hook<UCTNodeHook>>;
     // When we visit a node, add this amount of virtual losses
     // to it to encourage other CPUs to explore other parts of the
     // search tree.
@@ -43,7 +49,7 @@ public:
 
     explicit UCTNode(int vertex, float score, float init_eval);
     UCTNode() = delete;
-    ~UCTNode() = default;
+    ~UCTNode();
     bool first_visit() const;
     bool has_children() const;
     bool create_children(std::atomic<int>& nodecount,
@@ -66,11 +72,12 @@ public:
     void update(float eval);
 
     UCTNode* uct_select_child(int color);
-    UCTNode* get_first_child() const;
-    UCTNode* get_nopass_child(FastState& state) const;
-    const std::vector<node_ptr_t>& get_children() const;
+    const UCTNode* get_first_child() const;
+    const UCTNode* get_nopass_child(FastState& state) const;
+    List &get_children();
     size_t count_nodes() const;
-    node_ptr_t find_child(const int move);
+    UCTNode *find_child(const int move);
+    UCTNode *pick_node(int move);
     void sort_children(int color);
     UCTNode& get_best_root_child(int color);
     SMP::Mutex& get_mutex();
@@ -85,6 +92,7 @@ private:
     // if you want to add/remove/reorder any variables here.
 
     // Move
+    // This has to define
     std::int16_t m_move;
     // UCT
     std::atomic<std::int16_t> m_virtual_loss{0};
@@ -102,7 +110,7 @@ private:
 
     // Tree data
     std::atomic<bool> m_has_children{false};
-    std::vector<node_ptr_t> m_children;
+    List m_children;
 };
 
 #endif

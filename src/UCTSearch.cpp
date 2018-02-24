@@ -42,7 +42,12 @@ UCTSearch::UCTSearch(GameState& g)
     : m_rootstate(g) {
     set_playout_limit(cfg_max_playouts);
     set_visit_limit(cfg_max_visits);
-    m_root = std::make_unique<UCTNode>(FastBoard::PASS, 0.0f, 0.5f);
+    m_root = new UCTNode(FastBoard::PASS, 0.0f, 0.5f);
+}
+
+UCTSearch::~UCTSearch() {
+    delete m_root;
+
 }
 
 bool UCTSearch::advance_to_new_rootstate() {
@@ -76,7 +81,9 @@ bool UCTSearch::advance_to_new_rootstate() {
     for (auto i = 0; i < depth; i++) {
         test->forward_move();
         const auto move = test->get_last_move();
-        m_root = m_root->find_child(move);
+        auto p = m_root->pick_node(move);
+        delete m_root;
+        m_root = p;
         if (!m_root) {
             // Tree hasn't been expanded this far
             return false;
@@ -104,7 +111,7 @@ void UCTSearch::update_root() {
 #endif
 
     if (!advance_to_new_rootstate() || !m_root) {
-        m_root = std::make_unique<UCTNode>(FastBoard::PASS, 0.0f, 0.5f);
+        m_root = new UCTNode(FastBoard::PASS, 0.0f, 0.5f);
     }
     // Clear last_rootstate to prevent accidental use.
     m_last_rootstate.reset(nullptr);
@@ -182,24 +189,24 @@ void UCTSearch::dump_stats(KoState & state, UCTNode & parent) {
     }
 
     int movecount = 0;
-    for (const auto& node : parent.get_children()) {
+    for (auto& node : parent.get_children()) {
         // Always display at least two moves. In the case there is
         // only one move searched the user could get an idea why.
-        if (++movecount > 2 && !node->get_visits()) break;
+        if (++movecount > 2 && !node.get_visits()) break;
 
-        std::string tmp = state.move_to_text(node->get_move());
+        std::string tmp = state.move_to_text(node.get_move());
         std::string pvstring(tmp);
 
         myprintf("%4s -> %7d (V: %5.2f%%) (N: %5.2f%%) PV: ",
             tmp.c_str(),
-            node->get_visits(),
-            node->get_eval(color)*100.0f,
-            node->get_score() * 100.0f);
+            node.get_visits(),
+            node.get_eval(color)*100.0f,
+            node.get_score() * 100.0f);
 
         KoState tmpstate = state;
 
-        tmpstate.play_move(node->get_move());
-        pvstring += " " + get_pv(tmpstate, *node);
+        tmpstate.play_move(node.get_move());
+        pvstring += " " + get_pv(tmpstate, node);
 
         myprintf("%s\n", pvstring.c_str());
     }
@@ -284,7 +291,7 @@ int UCTSearch::get_best_move(passflag_t passflag) {
     if (passflag & UCTSearch::NOPASS) {
         // were we going to pass?
         if (bestmove == FastBoard::PASS) {
-            UCTNode * nopass = m_root->get_nopass_child(m_rootstate);
+            auto * nopass = m_root->get_nopass_child(m_rootstate);
 
             if (nopass != nullptr) {
                 myprintf("Preferring not to pass.\n");
@@ -325,7 +332,7 @@ int UCTSearch::get_best_move(passflag_t passflag) {
                 (score < 0.0f && color == FastBoard::BLACK)) {
                 myprintf("Passing loses :-(\n");
                 // Find a valid non-pass move.
-                UCTNode * nopass = m_root->get_nopass_child(m_rootstate);
+                auto * nopass = m_root->get_nopass_child(m_rootstate);
                 if (nopass != nullptr) {
                     myprintf("Avoiding pass because it loses.\n");
                     bestmove = nopass->get_move();
@@ -423,8 +430,8 @@ bool UCTSearch::stop_thinking(int elapsed_centis, int time_for_move) const {
     auto Nfirst = 0;
     auto Nsecond = 0;
     for (const auto& node : m_root->get_children()) {
-        if (node->valid()) {
-             auto N = node->get_visits();
+        if (node.valid()) {
+             auto N = node.get_visits();
              if (N > Nfirst) {
                  Nsecond = Nfirst;
                  Nfirst = N;
@@ -504,7 +511,7 @@ int UCTSearch::think(int color, passflag_t passflag) {
     int cpus = cfg_num_threads;
     ThreadGroup tg(thread_pool);
     for (int i = 1; i < cpus; i++) {
-        tg.add_task(UCTWorker(m_rootstate, this, m_root.get()));
+        tg.add_task(UCTWorker(m_rootstate, this, m_root));
     }
 
     bool keeprunning = true;
@@ -512,7 +519,7 @@ int UCTSearch::think(int color, passflag_t passflag) {
     do {
         auto currstate = std::make_unique<GameState>(m_rootstate);
 
-        auto result = play_simulation(*currstate, m_root.get());
+        auto result = play_simulation(*currstate, m_root);
         if (result.valid()) {
             increment_playouts();
         }
@@ -567,11 +574,11 @@ void UCTSearch::ponder() {
     int cpus = cfg_num_threads;
     ThreadGroup tg(thread_pool);
     for (int i = 1; i < cpus; i++) {
-        tg.add_task(UCTWorker(m_rootstate, this, m_root.get()));
+        tg.add_task(UCTWorker(m_rootstate, this, m_root));
     }
     do {
         auto currstate = std::make_unique<GameState>(m_rootstate);
-        auto result = play_simulation(*currstate, m_root.get());
+        auto result = play_simulation(*currstate, m_root);
         if (result.valid()) {
             increment_playouts();
         }

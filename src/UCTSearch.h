@@ -81,6 +81,7 @@ public:
         (sizeof(void*) == 4 ? 25'000'000 : 100'000'000);
 
     UCTSearch(GameState& g);
+    ~UCTSearch();
     int think(int color, passflag_t passflag = NORMAL);
     void set_playout_limit(int playouts);
     void set_visit_limit(int visits);
@@ -101,7 +102,7 @@ private:
 
     GameState & m_rootstate;
     std::unique_ptr<GameState> m_last_rootstate;
-    std::unique_ptr<UCTNode> m_root;
+    UCTNode *m_root;
     std::atomic<int> m_nodes{0};
     std::atomic<int> m_playouts{0};
     std::atomic<bool> m_run{false};

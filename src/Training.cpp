@@ -161,7 +161,7 @@ void Training::record(GameState& state, UCTNode& root) {
     // than trust the root to avoid ttable issues.
     auto sum_visits = 0.0;
     for (const auto& child : root.get_children()) {
-        sum_visits += child->get_visits();
+        sum_visits += child.get_visits();
     }
 
     // In a terminal position (with 2 passes), we can have children, but we
@@ -173,8 +173,8 @@ void Training::record(GameState& state, UCTNode& root) {
     }
 
     for (const auto& child : root.get_children()) {
-        auto prob = static_cast<float>(child->get_visits() / sum_visits);
-        auto move = child->get_move();
+        auto prob = static_cast<float>(child.get_visits() / sum_visits);
+        auto move = child.get_move();
         if (move != FastBoard::PASS) {
             auto xy = state.board.get_xy(move);
             step.probabilities[xy.second * 19 + xy.first] = prob;
