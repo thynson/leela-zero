@@ -451,9 +451,8 @@ UCTNode *UCTNode::pick_node(int move) {
     if (m_has_children) {
         for (auto i = m_children.begin(); i != m_children.end(); ++i) {
             if (i->get_move() == move) {
-                m_children.erase(i);
                 p = &*i;
-                m_children.clear_and_dispose([](UCTNode *p) { delete p; });
+                m_children.erase(i);
                 break;
 
             }
