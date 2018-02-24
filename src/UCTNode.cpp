@@ -46,26 +46,27 @@
 
 using namespace Utils;
 
-namespace {
-    using node_allocator_t = boost::pool<boost::default_user_allocator_new_delete>;
-    node_allocator_t node_allocator{sizeof(UCTNode), 4096};
-}
+using node_allocator_t = boost::singleton_pool<UCTNode, sizeof(UCTNode)>;
 
 void *UCTNode::operator new (std::size_t s) {
     assert(s == sizeof(UCTNode));
-    return node_allocator.malloc();
+    auto p = node_allocator_t::malloc();
+    return p;
 }
 
 void UCTNode::operator delete (void *p) {
-    node_allocator.free(p);
+    if (p != nullptr)
+        node_allocator_t::free(p);
 }
+
 
 UCTNode::~UCTNode() {
     m_children.clear_and_dispose([](UCTNode *p){ delete p;});
 }
 
 UCTNode::UCTNode(int vertex, float score, float init_eval)
-    : m_move(vertex), m_score(score), m_init_eval(init_eval) {
+    : UCTNodeHook {}
+    , m_move(vertex), m_score(score), m_init_eval(init_eval) {
 }
 
 bool UCTNode::first_visit() const {
@@ -94,11 +95,12 @@ bool UCTNode::create_children(std::atomic<int> & nodecount,
         return false;
     }
     // Someone else is running the expansion
-    if (m_is_expanding) {
+    bool expected = false;
+
+    // Get the right to expand this node
+    if (!m_is_expanding.compare_exchange_strong(expected, true)) {
         return false;
     }
-    // We'll be the one queueing this node for expansion, stop others
-    m_is_expanding = true;
     lock.unlock();
 
     const auto raw_netlist = Network::get_scored_moves(
@@ -143,18 +145,23 @@ void UCTNode::link_nodelist(std::atomic<int> & nodecount,
         return;
     }
 
-    // Use best to worst order, so highest go first
-    std::stable_sort(rbegin(nodelist), rend(nodelist));
+    // Use worst to best order, so lowest go first as push_back is not
+    // supported for slist so we have to build children list in reverse order
+    std::stable_sort(begin(nodelist), end(nodelist));
 
+    UCTNode::List list;
+
+    for (const auto& node : nodelist) {
+        list.push_front(*new UCTNode(node.second, node.first, init_eval));
+    }
     LOCK(get_mutex(), lock);
 
-    auto last = m_children.begin();
-    for (const auto& node : nodelist) {
-        last = m_children.insert_after(last, *new UCTNode(node.second, node.first, init_eval));
-    }
-
+    m_children.splice(m_children.before_begin(), list);
+//    std::swap(list, m_children);
     nodecount += m_children.size();
     m_has_children = true;
+    lock.unlock();
+    assert(list.empty());
 }
 
 void UCTNode::kill_superkos(const KoState& state) {
@@ -172,7 +179,9 @@ void UCTNode::kill_superkos(const KoState& state) {
     }
 
     // Now do the actual deletion.
-    m_children.remove_if([](const auto &child) { return !child.valid(); });
+    m_children.remove_and_dispose_if(
+            [](const auto &child) { return !child.valid(); },
+            [](UCTNode *p) { delete p; });
 }
 
 float UCTNode::eval_state(GameState& state) {
@@ -433,18 +442,18 @@ size_t UCTNode::count_nodes() const {
 }
 
 // Used to find new root in UCTSearch
-UCTNode *UCTNode::find_child(const int move) {
-    if (m_has_children) {
-        for (auto& child : m_children) {
-            if (child.get_move() == move) {
-                return &child;
-            }
-        }
-    }
-
-    // Can happen if we resigned or children are not expanded
-    return nullptr;
-}
+//UCTNode *UCTNode::find_child(const int move) {
+//    if (m_has_children) {
+//        for (auto& child : m_children) {
+//            if (child.get_move() == move) {
+//                return &child;
+//            }
+//        }
+//    }
+//
+//    // Can happen if we resigned or children are not expanded
+//    return nullptr;
+//}
 
 UCTNode *UCTNode::pick_node(int move) {
     UCTNode *p = nullptr;
@@ -458,7 +467,7 @@ UCTNode *UCTNode::pick_node(int move) {
             }
         }
     }
-    return nullptr;
+    return p;
 }
 
 const UCTNode* UCTNode::get_nopass_child(FastState& state) const {

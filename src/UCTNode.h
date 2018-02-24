@@ -32,7 +32,8 @@
 #include "SMP.h"
 
 using UCTNodeHook = boost::intrusive::slist_base_hook<
-            boost::intrusive::constant_time_size<true>>;
+            boost::intrusive::linear<true>,
+            boost::intrusive::link_mode<boost::intrusive::safe_link>>;
 
 class UCTNode final : public UCTNodeHook {
 public:
@@ -43,7 +44,8 @@ public:
     static constexpr auto VIRTUAL_LOSS_COUNT = 3;
 
     void *operator new (std::size_t);
-    void operator delete (void *);
+//    void operator delete (void *p, std::size_t s);
+    void operator delete (void *p);
 
     using node_ptr_t = std::unique_ptr<UCTNode>;
 
@@ -76,7 +78,7 @@ public:
     const UCTNode* get_nopass_child(FastState& state) const;
     List &get_children();
     size_t count_nodes() const;
-    UCTNode *find_child(const int move);
+//    UCTNode *find_child(const int move);
     UCTNode *pick_node(int move);
     void sort_children(int color);
     UCTNode& get_best_root_child(int color);
@@ -105,7 +107,7 @@ private:
     std::atomic<bool> m_valid{true};
     // Is someone adding scores to this node?
     // We don't need to unset this.
-    bool m_is_expanding{false};
+    std::atomic<bool> m_is_expanding{false};
     SMP::Mutex m_nodemutex;
 
     // Tree data

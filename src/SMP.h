@@ -22,6 +22,7 @@
 #include "config.h"
 
 #include <atomic>
+#include <mutex>
 
 namespace SMP {
     int get_num_cpus();

@@ -83,11 +83,11 @@ bool UCTSearch::advance_to_new_rootstate() {
         const auto move = test->get_last_move();
         auto p = m_root->pick_node(move);
         delete m_root;
-        m_root = p;
-        if (!m_root) {
-            // Tree hasn't been expanded this far
+        if (p == nullptr) {
             return false;
         }
+        assert(!p->is_linked());
+        m_root = p;
         m_last_rootstate->play_move(move);
     }
 
