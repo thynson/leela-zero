@@ -228,9 +228,9 @@ UCTNode* UCTNode::uct_select_child(int color) {
     }
 
     auto numerator = std::sqrt((double)parentvisits);
-    auto fpu_reduction = cfg_fpu_reduction * std::sqrt(total_visited_policy);
+    auto fpu_reduction = 1.0 / (1.0 + cfg_fpu_reduction * std::sqrt(total_visited_policy));
     // Estimated eval for unknown nodes = original parent NN eval - reduction
-    auto fpu_eval = get_net_eval(color) - fpu_reduction;
+    auto fpu_eval = get_net_eval(color) * fpu_reduction;
 
     for (const auto& child : m_children) {
         if (!child->active()) {
