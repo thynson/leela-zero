@@ -240,11 +240,15 @@ UCTNode* UCTNode::uct_select_child(int color, bool is_root) {
     // Count parentvisits manually to avoid issues with transpositions.
     auto total_visited_policy = 0.0f;
     auto parentvisits = size_t{0};
+    auto eval = get_eval(color);
+    auto psa_temp_factor = 1.0f / (1.0f + 4 * (0.5f - eval)*(0.5f - eval));
+    auto psasum = 0.0f;
     for (const auto& child : m_children) {
         if (child->valid()) {
             parentvisits += child->get_visits();
             if (child->get_visits() > 0) {
                 total_visited_policy += child->get_score();
+                psasum += std::pow(child->get_score(), psa_temp_factor);
             }
         }
     }
@@ -271,7 +275,7 @@ UCTNode* UCTNode::uct_select_child(int color, bool is_root) {
         }
         auto psa = child->get_score();
         auto denom = 1.0 + child->get_visits();
-        auto puct = cfg_puct * psa * (numerator / denom);
+        auto puct = cfg_puct * (numerator / denom) * std::pow(psa, psa_temp_factor) / psa_temp_factor;
         auto value = winrate + puct;
         assert(value > std::numeric_limits<double>::lowest());
 
