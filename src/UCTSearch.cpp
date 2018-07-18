@@ -161,6 +161,7 @@ SearchResult UCTSearch::play_simulation(GameState & currstate,
                                         UCTNode* const node) {
     const auto color = currstate.get_to_move();
     auto result = SearchResult{};
+    auto score = 1.0f;
 
     node->virtual_loss();
 
@@ -189,11 +190,12 @@ SearchResult UCTSearch::play_simulation(GameState & currstate,
             next->invalidate();
         } else {
             result = play_simulation(currstate, next);
+            score = next->get_score();
         }
     }
 
     if (result.valid()) {
-        node->update(result.eval());
+        node->update(result.eval(), score);
     }
     node->virtual_loss_undo();
 

@@ -179,9 +179,11 @@ void UCTNode::virtual_loss_undo() {
     m_virtual_loss -= VIRTUAL_LOSS_COUNT;
 }
 
-void UCTNode::update(float eval) {
+void UCTNode::update(float eval, float score) {
     m_visits++;
-    accumulate_eval(eval);
+    accumulate_visited_score(score);
+    accumulate_eval(eval, score);
+
 }
 
 bool UCTNode::has_children() const {
@@ -204,21 +206,36 @@ int UCTNode::get_visits() const {
     return m_visits;
 }
 
+double UCTNode::get_scored_visits() const
+{
+    return 0;
+}
+
 float UCTNode::get_eval(int tomove) const {
     // Due to the use of atomic updates and virtual losses, it is
     // possible for the visit count to change underneath us. Make sure
     // to return a consistent result to the caller by caching the values.
     auto virtual_loss = int{m_virtual_loss};
-    auto visits = get_visits() + virtual_loss;
-    assert(visits > 0);
-    auto blackeval = get_blackevals();
+//    auto visits = get_visits() + virtual_loss;
+//    assert(visits > 0);
+//    auto blackeval = get_blackevals();
+//    if (tomove == FastBoard::WHITE) {
+//        blackeval += static_cast<double>(virtual_loss);
+//    }
+//    auto score = static_cast<float>(blackeval / double(visits));
+//    if (tomove == FastBoard::WHITE) {
+//        score = 1.0f - score;
+//    }
+    auto visits = m_visited_score + get_visits() + virtual_loss;
+    auto blackeval = double(m_scored_blackevals) + get_blackevals();
     if (tomove == FastBoard::WHITE) {
-        blackeval += static_cast<double>(virtual_loss);
+        blackeval += double(virtual_loss);
     }
-    auto score = static_cast<float>(blackeval / double(visits));
+    auto score = float(blackeval/visits);
     if (tomove == FastBoard::WHITE) {
         score = 1.0f - score;
     }
+
     return score;
 }
 
@@ -233,9 +250,15 @@ double UCTNode::get_blackevals() const {
     return m_blackevals;
 }
 
-void UCTNode::accumulate_eval(float eval) {
+void UCTNode::accumulate_eval(float eval, float score) {
     atomic_add(m_blackevals, double(eval));
+    atomic_add(m_scored_blackevals, double(eval)*score);
 }
+
+void UCTNode::accumulate_visited_score(float score) {
+    atomic_add(m_visited_score, double(score));
+}
+
 
 UCTNode* UCTNode::uct_select_child(int color, bool is_root) {
     LOCK(get_mutex(), lock);
