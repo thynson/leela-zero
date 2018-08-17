@@ -51,7 +51,7 @@ public:
     const std::vector<UCTNodePointer>& get_children() const;
     void sort_children(int color);
     UCTNode& get_best_root_child(int color);
-    UCTNode* uct_select_child(int color, bool is_root);
+    UCTNode* uct_select_child(int color, bool is_root, float*uct_score);
 
     size_t count_nodes() const;
     SMP::Mutex& get_mutex();
@@ -69,9 +69,10 @@ public:
     float get_eval(int tomove) const;
     float get_raw_eval(int tomove, int virtual_loss = 0) const;
     float get_net_eval(int tomove) const;
+    double get_scored_visits() const;
     void virtual_loss(void);
     void virtual_loss_undo(void);
-    void update(float eval);
+    void update(float eval, float score);
 
     // Defined in UCTNodeRoot.cpp, only to be called on m_root in UCTSearch
     void randomize_first_proportionally();
@@ -94,7 +95,8 @@ private:
                        std::vector<Network::PolicyVertexPair>& nodelist,
                        float min_psa_ratio);
     double get_blackevals() const;
-    void accumulate_eval(float eval);
+    void accumulate_eval(float eval, float score);
+    void accumulate_visited_score(float score);
     void kill_superkos(const KoState& state);
     void dirichlet_noise(float epsilon, float alpha);
 
@@ -112,6 +114,8 @@ private:
     // Original net eval for this node (not children).
     float m_net_eval{0.0f};
     std::atomic<double> m_blackevals{0.0};
+    std::atomic<double> m_scored_blackevals{0.0f};
+    std::atomic<double> m_visited_score{0.0};
     std::atomic<Status> m_status{ACTIVE};
     // Is someone adding policy priors to this node?
     bool m_is_expanding{false};

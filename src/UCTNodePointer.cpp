@@ -79,6 +79,11 @@ float UCTNodePointer::get_policy() const {
     return read_policy();
 }
 
+double UCTNodePointer::get_scored_visits() const {
+    if (is_inflated()) return read_ptr()->get_scored_visits();
+    return 0.0;
+}
+
 bool UCTNodePointer::active() const {
     if (is_inflated()) return read_ptr()->active();
     return true;

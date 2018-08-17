@@ -193,6 +193,7 @@ SearchResult UCTSearch::play_simulation(GameState & currstate,
                                         UCTNode* const node) {
     const auto color = currstate.get_to_move();
     auto result = SearchResult{};
+    auto score = 1.0f;
 
     node->virtual_loss();
 
@@ -213,7 +214,7 @@ SearchResult UCTSearch::play_simulation(GameState & currstate,
     }
 
     if (node->has_children() && !result.valid()) {
-        auto next = node->uct_select_child(color, node == m_root.get());
+        auto next = node->uct_select_child(color, node == m_root.get(), &score);
         auto move = next->get_move();
 
         currstate.play_move(move);
@@ -225,7 +226,7 @@ SearchResult UCTSearch::play_simulation(GameState & currstate,
     }
 
     if (result.valid()) {
-        node->update(result.eval());
+        node->update(result.eval(), score);
     }
     node->virtual_loss_undo();
 

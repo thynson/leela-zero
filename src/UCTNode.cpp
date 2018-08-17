@@ -180,9 +180,11 @@ void UCTNode::virtual_loss_undo() {
     m_virtual_loss -= VIRTUAL_LOSS_COUNT;
 }
 
-void UCTNode::update(float eval) {
+void UCTNode::update(float eval, float score) {
     m_visits++;
-    accumulate_eval(eval);
+    accumulate_visited_score(score);
+    accumulate_eval(eval, score);
+
 }
 
 bool UCTNode::has_children() const {
@@ -208,10 +210,10 @@ int UCTNode::get_visits() const {
 float UCTNode::get_raw_eval(int tomove, int virtual_loss) const {
     auto visits = get_visits() + virtual_loss;
     assert(visits > 0);
-    auto blackeval = get_blackevals();
-    if (tomove == FastBoard::WHITE) {
-        blackeval += static_cast<double>(virtual_loss);
-    }
+    // Due to the use of atomic updates and virtual losses, it is
+    // possible for the visit count to change underneath us. Make sure
+    // to return a consistent result to the caller by caching the values.
+    double blackeval = m_blackevals;
     auto eval = static_cast<float>(blackeval / double(visits));
     if (tomove == FastBoard::WHITE) {
         eval = 1.0f - eval;
@@ -219,10 +221,12 @@ float UCTNode::get_raw_eval(int tomove, int virtual_loss) const {
     return eval;
 }
 
+double UCTNode::get_scored_visits() const
+{
+    return m_visited_score;
+}
+
 float UCTNode::get_eval(int tomove) const {
-    // Due to the use of atomic updates and virtual losses, it is
-    // possible for the visit count to change underneath us. Make sure
-    // to return a consistent result to the caller by caching the values.
     return get_raw_eval(tomove, m_virtual_loss);
 }
 
@@ -237,32 +241,40 @@ double UCTNode::get_blackevals() const {
     return m_blackevals;
 }
 
-void UCTNode::accumulate_eval(float eval) {
+void UCTNode::accumulate_eval(float eval, float score) {
     atomic_add(m_blackevals, double(eval));
+    atomic_add(m_scored_blackevals, double(eval)*(score));
 }
 
-UCTNode* UCTNode::uct_select_child(int color, bool is_root) {
+void UCTNode::accumulate_visited_score(float score) {
+    atomic_add(m_visited_score, double(score));
+}
+
+
+UCTNode* UCTNode::uct_select_child(int color, bool is_root, float *uct_score) {
     LOCK(get_mutex(), lock);
 
     // Count parentvisits manually to avoid issues with transpositions.
-    auto total_visited_policy = 0.0f;
-    auto parentvisits = size_t{0};
+    auto total_visited_score = 0.0f;
+    auto parentvisits = 0.0;
+    auto parent_scored_visits  =0.0;
     for (const auto& child : m_children) {
         if (child.valid()) {
-            parentvisits += child.get_visits();
+            parentvisits += child.get_scored_visits();
+            parent_scored_visits += child.get_scored_visits();
             if (child.get_visits() > 0) {
-                total_visited_policy += child.get_policy();
+                total_visited_score += child.get_score();
             }
         }
     }
 
-    auto numerator = std::sqrt(double(parentvisits));
+    auto numerator = std::sqrt(double(parent_scored_visits));
     auto fpu_reduction = 0.0f;
     // Lower the expected eval for moves that are likely not the best.
     // Do not do this if we have introduced noise at this node exactly
     // to explore more.
     if (!is_root || !cfg_noise) {
-        fpu_reduction = cfg_fpu_reduction * std::sqrt(total_visited_policy);
+        fpu_reduction = cfg_fpu_reduction * std::sqrt(total_visited_score);
     }
     // Estimated eval for unknown nodes = original parent NN eval - reduction
     auto fpu_eval = get_net_eval(color) - fpu_reduction;
@@ -279,8 +291,8 @@ UCTNode* UCTNode::uct_select_child(int color, bool is_root) {
         if (child.get_visits() > 0) {
             winrate = child.get_eval(color);
         }
-        auto psa = child.get_policy();
-        auto denom = 1.0 + child.get_visits();
+        auto psa = child.get_score();
+        auto denom = 1.0 + child.get_scored_visits();
         auto puct = cfg_puct * psa * (numerator / denom);
         auto value = winrate + puct;
         assert(value > std::numeric_limits<double>::lowest());
@@ -292,6 +304,11 @@ UCTNode* UCTNode::uct_select_child(int color, bool is_root) {
     }
 
     assert(best != nullptr);
+    if (best->get_visits() == 0) {
+        (*uct_score) = best->get_score();
+    } else {
+        (*uct_score) = float(best->get_scored_visits() * total_visited_score / get_scored_visits());
+    }
     best->inflate();
     return best->get();
 }
