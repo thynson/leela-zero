@@ -263,7 +263,7 @@ UCTNode* UCTNode::uct_select_child(int color, bool is_root, float *uct_score) {
             parentvisits += child.get_scored_visits();
             parent_scored_visits += child.get_scored_visits();
             if (child.get_visits() > 0) {
-                total_visited_score += child.get_score();
+                total_visited_score += child.get_policy();
             }
         }
     }
@@ -291,7 +291,7 @@ UCTNode* UCTNode::uct_select_child(int color, bool is_root, float *uct_score) {
         if (child.get_visits() > 0) {
             winrate = child.get_eval(color);
         }
-        auto psa = child.get_score();
+        auto psa = child.get_policy();
         auto denom = 1.0 + child.get_scored_visits();
         auto puct = cfg_puct * psa * (numerator / denom);
         auto value = winrate + puct;
@@ -305,7 +305,7 @@ UCTNode* UCTNode::uct_select_child(int color, bool is_root, float *uct_score) {
 
     assert(best != nullptr);
     if (best->get_visits() == 0) {
-        (*uct_score) = best->get_score();
+        (*uct_score) = best->get_policy();
     } else {
         (*uct_score) = float(best->get_scored_visits() * total_visited_score / get_scored_visits());
     }
