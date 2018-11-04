@@ -108,7 +108,7 @@ void GTP::setup_default_parameters() {
     cfg_gtp_mode = false;
     cfg_allow_pondering = true;
     // we will re-calculate this on Leela.cpp
-    cfg_num_threads = 0;
+    cfg_num_threads = 2;
 
     cfg_max_memory = UCTSearch::DEFAULT_MAX_MEMORY;
     cfg_max_playouts = UCTSearch::UNLIMITED_PLAYOUTS;
@@ -125,7 +125,7 @@ void GTP::setup_default_parameters() {
     cfg_tune_only = false;
 
     // we will re-calculate this on Leela.cpp
-    cfg_batch_size = 0;
+    cfg_batch_size = 5;
 #ifdef USE_HALF
     cfg_precision = precision_t::AUTO;
 #endif

@@ -28,6 +28,7 @@
 #include "ForwardPipe.h"
 #include "OpenCL.h"
 #include "ThreadPool.h"
+extern int cfg_batch_size;
 
 template <typename net_t>
 class OpenCLScheduler : public ForwardPipe {
@@ -49,6 +50,18 @@ class OpenCLScheduler : public ForwardPipe {
                         std::vector<float>& output_val) : in(input), out_p(output_pol), out_v(output_val)
         {}
     };
+    class ForwardQueueEntry0 {
+    public:
+        std::unique_ptr<const std::vector<float>> in;
+        const int tomove;
+        const int symmetry;
+        Netresult_ptr result;
+        ForwardQueueEntry0(std::unique_ptr<const std::vector<float>> input,
+                           const int tomove,
+                           const int symmetry,
+                           Netresult_ptr result) : in(std::move(input)), tomove(tomove), symmetry(symmetry), result(result)
+        {}
+    };
 public:
     virtual ~OpenCLScheduler();
     OpenCLScheduler();
@@ -57,6 +70,10 @@ public:
     virtual void forward(const std::vector<float>& input,
                          std::vector<float>& output_pol,
                          std::vector<float>& output_val);
+    virtual void forward0(std::unique_ptr<const std::vector<float>> input,
+                          const int tomove,
+                          const int symmetry,
+                          Netresult_ptr result);
     virtual bool needs_autodetect();
     virtual void push_weights(unsigned int filter_size,
                               unsigned int channels,
@@ -69,6 +86,7 @@ private:
 
     std::mutex m_mutex;
     std::condition_variable m_cv;
+    std::condition_variable m_cv0;
 
     // start with 10 milliseconds : lock protected
     int m_waittime{10};
@@ -77,7 +95,10 @@ private:
     std::atomic<bool> m_single_eval_in_progress{false};
 
     std::list<std::shared_ptr<ForwardQueueEntry>> m_forward_queue;
+    std::list<std::unique_ptr<ForwardQueueEntry0>> m_forward_queue0;
+
     std::list<std::thread> m_worker_threads;
+    std::vector<std::atomic<int>*> batch_stats;
 
     void batch_worker(const size_t gnum);
     void push_input_convolution(unsigned int filter_size,

@@ -45,13 +45,23 @@ public:
 
     bool create_children(Network & network,
                          std::atomic<int>& nodecount,
-                         GameState& state, float& eval,
+                         GameState& state,
+                         float& eval,
                          float min_psa_ratio = 0.0f);
+    void create_children0(Network::Netresult& raw_netlist,
+                          int symmetry,
+                          std::atomic<int>& nodecount,
+                          GameState& state,
+                          float min_psa_ratio);
 
     const std::vector<UCTNodePointer>& get_children() const;
     void sort_children(int color);
     UCTNode& get_best_root_child(int color);
     UCTNode* uct_select_child(int color, bool is_root);
+
+    enum visit_type : bool {
+        SEL = 0, WR = 1 // for selection or for winrate
+    };
 
     size_t count_nodes_and_clear_expand_state();
     bool first_visit() const;
@@ -62,7 +72,7 @@ public:
     bool valid() const;
     bool active() const;
     int get_move() const;
-    int get_visits() const;
+    double get_visits(visit_type type = SEL) const;
     float get_policy() const;
     void set_policy(float policy);
     float get_eval(int tomove) const;
@@ -70,7 +80,7 @@ public:
     float get_net_eval(int tomove) const;
     void virtual_loss();
     void virtual_loss_undo();
-    void update(float eval);
+    void update(float eval, float factor = 1.0f, float sel_factor = 1.0f);
 
     // Defined in UCTNodeRoot.cpp, only to be called on m_root in UCTSearch
     void randomize_first_proportionally();
@@ -106,7 +116,8 @@ private:
     std::int16_t m_move;
     // UCT
     std::atomic<std::int16_t> m_virtual_loss{0};
-    std::atomic<int> m_visits{0};
+    std::atomic<double> m_visits{0.0};
+    std::atomic<double> m_sel_visits{0.0};
     // UCT eval
     float m_policy;
     // Original net eval for this node (not children).
@@ -134,7 +145,7 @@ private:
     // Tree data
     std::atomic<float> m_min_psa_ratio_children{2.0f};
     std::vector<UCTNodePointer> m_children;
-
+public:
     //  m_expand_state manipulation methods
     // INITIAL -> EXPANDING
     // Return false if current state is not INITIAL

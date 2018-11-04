@@ -116,7 +116,7 @@ public:
     // proxy of UCTNode methods which can be called without
     // constructing UCTNode
     bool valid() const;
-    int get_visits() const;
+    double get_visits() const;
     float get_policy() const;
     bool active() const;
     int get_move() const;

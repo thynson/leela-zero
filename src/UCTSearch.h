@@ -64,6 +64,20 @@ namespace TimeManagement {
     };
 };
 
+
+struct BackupData {
+    struct NodeFactor {
+        UCTNode* node;
+        float factor;
+        NodeFactor(UCTNode* node, float factor) : node(node), factor(factor) {}
+    };
+    float eval{ -1.0f };
+    std::vector<NodeFactor> path;
+    Netresult_ptr netresult;
+    int symmetry;
+    std::unique_ptr<GameState> state;
+};
+
 class UCTSearch {
 public:
     /*
@@ -103,7 +117,8 @@ public:
     void ponder();
     bool is_running() const;
     void increment_playouts();
-    SearchResult play_simulation(GameState& currstate, UCTNode* const node);
+    void play_simulation(std::unique_ptr<GameState> currstate, UCTNode* node, int thread_num);
+    void backup();
 
 private:
     float get_min_psa_ratio() const;
@@ -134,17 +149,24 @@ private:
     std::list<Utils::ThreadGroup> m_delete_futures;
 
     Network & m_network;
+
+    std::mutex m_mutex;
+    std::condition_variable m_cv;
+    std::queue<std::unique_ptr<BackupData>> backup_queue;
+    void backup(BackupData& bd);
+    void failed_simulation(BackupData& bd);
 };
 
 class UCTWorker {
 public:
-    UCTWorker(GameState & state, UCTSearch * search, UCTNode * root)
-      : m_rootstate(state), m_search(search), m_root(root) {}
+    UCTWorker(GameState & state, UCTSearch * search, UCTNode * root, int thread_num)
+      : m_rootstate(state), m_search(search), m_root(root), m_thread_num(thread_num) {}
     void operator()();
 private:
     GameState & m_rootstate;
     UCTSearch * m_search;
     UCTNode * m_root;
+    int m_thread_num;
 };
 
 #endif

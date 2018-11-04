@@ -113,6 +113,63 @@ bool UCTNode::create_children(Network & network,
     return true;
 }
 
+std::array<std::array<int, NUM_INTERSECTIONS>,
+    Network::NUM_SYMMETRIES> Network::symmetry_nn_idx_table;
+
+void UCTNode::create_children0(Network::Netresult& raw_netlist0,
+                               int symmetry,
+                               std::atomic<int>& nodecount,
+                               GameState& state, 
+                               float min_psa_ratio) {
+
+    Network::Netresult raw_netlist;
+    m_net_eval = raw_netlist.winrate = raw_netlist0.winrate;
+    const auto to_move = state.board.get_to_move();
+    // our search functions evaluate from black's point of view
+    if (state.board.white_to_move()) {
+        m_net_eval = 1.0f - m_net_eval;
+    }
+
+    for (auto idx = size_t{ 0 }; idx < NUM_INTERSECTIONS; ++idx) {
+        const auto sym_idx = Network::symmetry_nn_idx_table[symmetry][idx];
+        raw_netlist.policy[idx] = raw_netlist0.policy[sym_idx];
+    }
+    raw_netlist.policy_pass = raw_netlist0.policy_pass;
+
+    std::vector<Network::PolicyVertexPair> nodelist;
+
+    auto legal_sum = 0.0f;
+    for (auto i = 0; i < NUM_INTERSECTIONS; i++) {
+        const auto x = i % BOARD_SIZE;
+        const auto y = i / BOARD_SIZE;
+        const auto vertex = state.board.get_vertex(x, y);
+        if (state.is_move_legal(to_move, vertex)) {
+            nodelist.emplace_back(raw_netlist.policy[i], vertex);
+            legal_sum += raw_netlist.policy[i];
+        }
+    }
+    nodelist.emplace_back(raw_netlist.policy_pass, FastBoard::PASS);
+    legal_sum += raw_netlist.policy_pass;
+
+    if (legal_sum > std::numeric_limits<float>::min()) {
+        // re-normalize after removing illegal moves.
+        for (auto& node : nodelist) {
+            node.first /= legal_sum;
+        }
+    }
+    else {
+        // This can happen with new randomized nets.
+        auto uniform_prob = 1.0f / nodelist.size();
+        for (auto& node : nodelist) {
+            node.first = uniform_prob;
+        }
+    }
+
+    link_nodelist(nodecount, nodelist, min_psa_ratio);
+    expand_done();
+    return;
+}
+
 void UCTNode::link_nodelist(std::atomic<int>& nodecount,
                             std::vector<Network::PolicyVertexPair>& nodelist,
                             float min_psa_ratio) {
@@ -168,9 +225,10 @@ void UCTNode::virtual_loss_undo() {
     m_virtual_loss -= VIRTUAL_LOSS_COUNT;
 }
 
-void UCTNode::update(float eval) {
-    m_visits++;
-    accumulate_eval(eval);
+void UCTNode::update(float eval, float factor, float sel_factor) {
+    atomic_add(m_sel_visits, double(sel_factor));
+    atomic_add(m_visits, double(factor));
+    atomic_add(m_blackevals, double(eval*factor));
 }
 
 bool UCTNode::has_children() const {
@@ -196,12 +254,13 @@ void UCTNode::set_policy(float policy) {
     m_policy = policy;
 }
 
-int UCTNode::get_visits() const {
-    return m_visits;
+double UCTNode::get_visits(visit_type type) const {
+    if (type == SEL) { return m_sel_visits; }
+    else { return m_visits; }
 }
 
 float UCTNode::get_raw_eval(int tomove, int virtual_loss) const {
-    auto visits = get_visits() + virtual_loss;
+    auto visits = get_visits(WR) + virtual_loss;
     assert(visits > 0);
     auto blackeval = get_blackevals();
     if (tomove == FastBoard::WHITE) {
@@ -241,7 +300,7 @@ UCTNode* UCTNode::uct_select_child(int color, bool is_root) {
 
     // Count parentvisits manually to avoid issues with transpositions.
     auto total_visited_policy = 0.0f;
-    auto parentvisits = size_t{0};
+    auto parentvisits = 0.0f;
     for (const auto& child : m_children) {
         if (child.valid()) {
             parentvisits += child.get_visits();
@@ -271,18 +330,19 @@ UCTNode* UCTNode::uct_select_child(int color, bool is_root) {
         }
 
         auto winrate = fpu_eval;
-        if (child.is_inflated() && child->m_expand_state.load() == ExpandState::EXPANDING) {
-            // Someone else is expanding this node, never select it
-            // if we can avoid so, because we'd block on it.
-            winrate = -1.0f - fpu_reduction;
-        } else if (child.get_visits() > 0) {
+        if (child.get_visits() > 0) {
             winrate = child.get_eval(color);
         }
         auto psa = child.get_policy();
         auto denom = 1.0 + child.get_visits();
         auto puct = cfg_puct * psa * (numerator / denom);
         auto value = winrate + puct;
-        assert(value > std::numeric_limits<double>::lowest());
+
+        if (child.is_inflated() && child->m_expand_state.load() == ExpandState::EXPANDING) {
+            // Someone else is expanding this node, never select it
+            // if we can avoid so, because we'd block on it.
+            value = -1.0f - cfg_fpu_reduction;
+        }
 
         if (value > best_value) {
             best_value = value;

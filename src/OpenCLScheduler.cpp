@@ -102,8 +102,11 @@ template <typename net_t>
 void OpenCLScheduler<net_t>::initialize(const int channels) {
     // Launch the worker threads.  Minimum 1 worker per GPU, but use enough threads
     // so that we can at least concurrently schedule something to the GPU.
-    auto num_worker_threads = cfg_num_threads / cfg_batch_size / (m_opencl.size() + 1) + 1;
+    auto num_worker_threads = 2; // cfg_num_threads / cfg_batch_size / (m_opencl.size() + 1) + 1;
     auto gnum = 0;
+    for (auto i = 0; i < cfg_batch_size; i++) {
+        batch_stats.emplace_back(new std::atomic<int>(0));
+    }
     for (auto & opencl : m_opencl) {
         opencl->initialize(channels, cfg_batch_size);
 
@@ -125,6 +128,11 @@ OpenCLScheduler<net_t>::~OpenCLScheduler() {
     for (auto & x : m_worker_threads) {
         x.join();
     }
+
+    for (auto count : batch_stats) {
+        myprintf("%d, ", count->load());
+    }
+    myprintf("\n");
 }
 
 template<typename net_t>
@@ -263,6 +271,22 @@ void OpenCLScheduler<net_t>::forward(const std::vector<float>& input,
     entry->cv.wait(lk);
 }
 
+template <typename net_t>
+void OpenCLScheduler<net_t>::forward0(std::unique_ptr<const std::vector<float>> input,
+                                      const int tomove,
+                                      const int symmetry,
+                                      Netresult_ptr result) {
+    std::unique_lock<std::mutex> lk(m_mutex);
+    m_forward_queue0.push_back(std::make_unique<ForwardQueueEntry0>(
+        std::move(input), tomove, symmetry, result));
+    auto max_size = cfg_batch_size * m_opencl.size() * 2;
+    if (m_forward_queue0.size() >= max_size) {
+        m_cv0.wait(lk, [&] { return m_forward_queue0.size() < max_size; });
+    }
+    lk.unlock();
+    m_cv.notify_one();
+}
+
 #ifndef NDEBUG
 std::atomic<size_t> batch_stats[2];
 #endif
@@ -293,14 +317,21 @@ void OpenCLScheduler<net_t>::batch_worker(const size_t gnum) {
     // the wrong decision.  Wait 2ms longer next time
 
     auto pickup_task = [this, gnum] () {
-        std::list<std::shared_ptr<ForwardQueueEntry>> inputs;
+        std::list<std::unique_ptr<ForwardQueueEntry0>> inputs;
         int count = 0;
 
         std::unique_lock<std::mutex> lk(m_mutex);
         while (true) {
             if (!m_running) return inputs;
-
-            count = static_cast<int>(m_forward_queue.size());
+            int queue_size = m_forward_queue0.size();
+            if (!queue_size) {
+                m_cv.wait(lk,
+                    [this, &queue_size] { queue_size = m_forward_queue0.size();
+                                          return !m_running || queue_size > 0; });
+            }
+            count = std::min(queue_size, cfg_batch_size);
+            break;
+            /*
             if (count >= cfg_batch_size) {
                 count = cfg_batch_size;
                 break;
@@ -323,12 +354,20 @@ void OpenCLScheduler<net_t>::batch_worker(const size_t gnum) {
                     break;
                 }
             }
+            */
         }
-        auto end = begin(m_forward_queue);
+        auto end = begin(m_forward_queue0);
         std::advance(end, count);
-        std::move(begin(m_forward_queue), end, std::back_inserter(inputs));
-        m_forward_queue.erase(begin(m_forward_queue), end);
-
+        std::move(begin(m_forward_queue0), end, std::back_inserter(inputs));
+        m_forward_queue0.erase(begin(m_forward_queue0), end);
+        
+        if (count) { (*batch_stats[count - 1])++; }
+        /*
+        for (auto count : batch_stats) {
+            myprintf("%d, ", count->load());
+        }
+        myprintf("\n");
+        */
         return inputs;
     };
 
@@ -338,6 +377,7 @@ void OpenCLScheduler<net_t>::batch_worker(const size_t gnum) {
 
     while (true) {
         auto inputs = pickup_task();
+        //m_cv0.notify_all();
         auto count = inputs.size();
 
         if (!m_running) {
@@ -354,8 +394,7 @@ void OpenCLScheduler<net_t>::batch_worker(const size_t gnum) {
         {
             size_t index = 0;
             for (auto it = begin(inputs); it != end(inputs); ++it) {
-                std::unique_lock<std::mutex> lk((*it)->mutex);
-                std::copy(begin((*it)->in), end((*it)->in), begin(batch_input) + in_size * index);
+                std::copy(begin(*((*it)->in)), end(*((*it)->in)), begin(batch_input) + in_size * index);
                 index++;
             }
         }
@@ -368,20 +407,17 @@ void OpenCLScheduler<net_t>::batch_worker(const size_t gnum) {
         {
             size_t index = 0;
             for (auto it = begin(inputs); it != end(inputs); ++it) {
-                std::copy(begin(batch_output_pol) + out_pol_size * index,
-                          begin(batch_output_pol) + out_pol_size * (index + 1),
-                          begin((*it)->out_p));
-                std::copy(begin(batch_output_val) + out_val_size * index,
-                          begin(batch_output_val) + out_val_size * (index + 1),
-                          begin((*it)->out_v));
-                (*it)->cv.notify_all();
+                std::vector<float> out_p(begin(batch_output_pol) + out_pol_size * index,
+                                         begin(batch_output_pol) + out_pol_size * (index + 1));
+                std::vector<float> out_v(begin(batch_output_val) + out_val_size * index,
+                                         begin(batch_output_val) + out_val_size * (index + 1));
                 index++;
+                m_network->process_output(out_p, out_v, (*it)->tomove, (*it)->symmetry, (*it)->result);
             }
         }
 
-        if (count == 1) {
-            m_single_eval_in_progress = false;
-        }
+        m_search->backup(); 
+        m_cv0.notify_all();
     }
 }
 

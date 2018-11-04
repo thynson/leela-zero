@@ -69,7 +69,7 @@ static void calculate_thread_count_cpu(boost::program_options::variables_map & v
 #ifdef USE_OPENCL
 static void calculate_thread_count_gpu(boost::program_options::variables_map & vm) {
     auto cfg_max_threads = MAX_CPUS;
-
+    /*
     // Default thread count : GPU case
     // 1) if no args are given, use batch size of 5 and thread count of (batch size) * (number of gpus)
     // 2) if number of threads are given, use batch size of (thread count) / (number of gpus)
@@ -79,7 +79,7 @@ static void calculate_thread_count_gpu(boost::program_options::variables_map & v
         // size of zero if autodetect GPU : default to 1
         gpu_count = 1;
     }
-
+    */
     if (vm.count("threads")) {
         auto num_threads = vm["threads"].as<int>();
         if (num_threads > cfg_max_threads) {
@@ -87,7 +87,11 @@ static void calculate_thread_count_gpu(boost::program_options::variables_map & v
             num_threads = cfg_max_threads;
         }
         cfg_num_threads = num_threads;
-
+    }
+    if (vm.count("batchsize")) {
+        cfg_batch_size = vm["batchsize"].as<int>();
+    }
+        /*
         if (vm.count("batchsize")) {
             cfg_batch_size = vm["batchsize"].as<int>();
         } else {
@@ -113,7 +117,7 @@ static void calculate_thread_count_gpu(boost::program_options::variables_map & v
         printf("Threads number = %d must be larger than batch size = %d\n", cfg_num_threads, cfg_batch_size);
         exit(EXIT_FAILURE);
     }
-
+    */
 
 }
 #endif

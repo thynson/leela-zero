@@ -181,6 +181,7 @@ void UCTNode::prepare_root_node(Network & network, int color,
                                 std::atomic<int>& nodes,
                                 GameState& root_state) {
     float root_eval;
+    /*
     const auto had_children = has_children();
     if (expandable()) {
         create_children(network, nodes, root_state, root_eval);
@@ -191,6 +192,8 @@ void UCTNode::prepare_root_node(Network & network, int color,
         update(root_eval);
         root_eval = (color == FastBoard::BLACK ? root_eval : 1.0f - root_eval);
     }
+    */
+    root_eval = get_net_eval(color);
     Utils::myprintf("NN eval=%f\n", root_eval);
 
     // There are a lot of special cases where code assumes
