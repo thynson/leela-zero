@@ -295,7 +295,7 @@ void UCTNode::accumulate_eval(float eval) {
     atomic_add(m_blackevals, double(eval));
 }
 
-UCTNode* UCTNode::uct_select_child(int color, bool is_root) {
+std::pair<UCTNode*, float> UCTNode::uct_select_child(int color, bool is_root) {
     wait_expanded();
 
     // Count parentvisits manually to avoid issues with transpositions.
@@ -306,6 +306,9 @@ UCTNode* UCTNode::uct_select_child(int color, bool is_root) {
             parentvisits += child.get_visits();
             if (child.get_visits() > 0) {
                 total_visited_policy += child.get_policy();
+            }
+            else {
+                break; // children are ordered by policy (initially) or by visits (NodeComp), so this is good.
             }
         }
     }
@@ -319,10 +322,14 @@ UCTNode* UCTNode::uct_select_child(int color, bool is_root) {
         fpu_reduction = cfg_fpu_reduction * std::sqrt(total_visited_policy);
     }
     // Estimated eval for unknown nodes = original parent NN eval - reduction
-    auto fpu_eval = get_net_eval(color) - fpu_reduction;
+    auto net_eval = get_raw_eval(color);
+    auto fpu_eval = net_eval - fpu_reduction;
 
     auto best = static_cast<UCTNodePointer*>(nullptr);
     auto best_value = std::numeric_limits<double>::lowest();
+    auto best_actual_value = best_value;
+    auto actual_value_of_best = best_value;
+    total_visited_policy = 0.0f;
 
     for (auto& child : m_children) {
         if (!child.active()) {
@@ -330,6 +337,10 @@ UCTNode* UCTNode::uct_select_child(int color, bool is_root) {
         }
 
         auto winrate = fpu_eval;
+        auto actual_winrate = winrate;
+        if (child.get_visits() > 0) {
+            actual_winrate = child.get_raw_eval(color);
+        }
         if (child.get_visits() > 0) {
             winrate = child.get_eval(color);
         }
@@ -337,6 +348,7 @@ UCTNode* UCTNode::uct_select_child(int color, bool is_root) {
         auto denom = 1.0 + child.get_visits();
         auto puct = cfg_puct * psa * (numerator / denom);
         auto value = winrate + puct;
+        auto actual_value = actual_winrate + puct;
 
         if (child.is_inflated() && child->m_expand_state.load() == ExpandState::EXPANDING) {
             // Someone else is expanding this node, never select it
@@ -346,13 +358,20 @@ UCTNode* UCTNode::uct_select_child(int color, bool is_root) {
 
         if (value > best_value) {
             best_value = value;
+            actual_value_of_best = child.get_visits() > 0 ? actual_value :
+                                   net_eval - cfg_fpu_reduction * std::sqrt(total_visited_policy) + puct;
             best = &child;
         }
+
+        if (actual_value > best_actual_value) {
+            best_actual_value = actual_value;
+        }
+        total_visited_policy += psa;
     }
 
     assert(best != nullptr);
     best->inflate();
-    return best->get();
+    return std::make_pair(best->get(), actual_value_of_best - best_actual_value);
 }
 
 class NodeComp : public std::binary_function<UCTNodePointer&,

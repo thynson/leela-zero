@@ -57,7 +57,7 @@ public:
     const std::vector<UCTNodePointer>& get_children() const;
     void sort_children(int color);
     UCTNode& get_best_root_child(int color);
-    UCTNode* uct_select_child(int color, bool is_root);
+    std::pair<UCTNode*, float> UCTNode::uct_select_child(int color, bool is_root);
 
     enum visit_type : bool {
         SEL = 0, WR = 1 // for selection or for winrate

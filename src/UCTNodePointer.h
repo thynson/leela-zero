@@ -122,6 +122,7 @@ public:
     int get_move() const;
     // this can only be called if it is an inflated pointer
     float get_eval(int tomove) const;
+    float get_raw_eval(int tomove) const;
 };
 
 #endif

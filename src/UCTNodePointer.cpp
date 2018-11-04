@@ -138,6 +138,13 @@ float UCTNodePointer::get_eval(int tomove) const {
     assert(is_inflated(v));
     return read_ptr(v)->get_eval(tomove);
 }
+float UCTNodePointer::get_raw_eval(int tomove) const {
+    // this can only be called if it is an inflated pointer
+    auto v = m_data.load();
+    assert(is_inflated(v));
+    return read_ptr(v)->get_raw_eval(tomove);
+}
+
 
 int UCTNodePointer::get_move() const {
     auto v = m_data.load();
