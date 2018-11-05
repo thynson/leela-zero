@@ -42,6 +42,10 @@ class UCTNode;
 // All methods should be thread-safe except destructor and when
 // the instanced is 'moved from'.
 
+enum visit_type : bool {
+    SEL = 0, WR = 1 // for selection or for winrate
+};
+
 class UCTNodePointer {
 private:
     static constexpr std::uint64_t INVALID = 2;
@@ -116,7 +120,7 @@ public:
     // proxy of UCTNode methods which can be called without
     // constructing UCTNode
     bool valid() const;
-    double get_visits() const;
+    double get_visits(visit_type type = WR) const;
     float get_policy() const;
     bool active() const;
     int get_move() const;

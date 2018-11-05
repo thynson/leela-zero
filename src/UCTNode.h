@@ -43,25 +43,16 @@ public:
     UCTNode() = delete;
     ~UCTNode() = default;
 
-    bool create_children(Network & network,
-                         std::atomic<int>& nodecount,
-                         GameState& state,
-                         float& eval,
-                         float min_psa_ratio = 0.0f);
-    void create_children0(Network::Netresult& raw_netlist,
+    void create_children(Network::Netresult& raw_netlist,
                           int symmetry,
                           std::atomic<int>& nodecount,
                           GameState& state,
-                          float min_psa_ratio);
+                          float min_psa_ratio = 0.0f);
 
     const std::vector<UCTNodePointer>& get_children() const;
     void sort_children(int color);
     UCTNode& get_best_root_child(int color);
     std::pair<UCTNode*, float> UCTNode::uct_select_child(int color, bool is_root);
-
-    enum visit_type : bool {
-        SEL = 0, WR = 1 // for selection or for winrate
-    };
 
     size_t count_nodes_and_clear_expand_state();
     bool first_visit() const;
@@ -93,7 +84,6 @@ public:
     std::unique_ptr<UCTNode> find_child(const int move);
     void inflate_all_children();
 
-    void clear_expand_state();
 private:
     enum Status : char {
         INVALID, // superko
@@ -151,7 +141,7 @@ public:
     // Return false if current state is not INITIAL
     bool acquire_expanding();
 
-    // EXPANDING -> DONE
+    // EXPANDING -> EXPANDED
     void expand_done();
 
     // EXPANDING -> INITIAL

@@ -181,14 +181,4 @@ private:
     std::array<float, 1> m_ip2_val_b;
     bool m_value_head_not_stm;
 };
-
-/*
-struct NetReturnData {
-    std::mutex m_mutex;
-    Netresult_ptr result;
-    int tomove;
-    int symmetry;
-    std::vector<BackupData> bd;
-};
-*/
 #endif

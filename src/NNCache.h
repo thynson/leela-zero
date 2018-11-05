@@ -60,13 +60,6 @@ public:
     // Resize NNCache
     void resize(int size);
 
-    // Try and find an existing entry.
-    //bool lookup(std::uint64_t hash, Netresult & result);
-
-    // Insert a new entry.
-    //void insert(std::uint64_t hash,
-    //            const Netresult& result);
-
     // Return the hit rate ratio.
     std::pair<int, int> hit_rate() const {
         return {m_hits, m_lookups};
@@ -86,7 +79,7 @@ public:
     };
 
     static constexpr size_t ENTRY_SIZE =
-        sizeof(Netresult)
+        sizeof(Entry)
         + sizeof(std::uint64_t)
         + sizeof(std::shared_ptr<Entry>);
 

@@ -854,32 +854,6 @@ Network::Netresult Network::get_output(
     return result;
 }
 
-/*
-void Network::get_output_internal0(
-    const GameState* const state, const int symmetry, Netresult_ptr result, bool selfcheck) {
-
-    assert(symmetry >= 0 && symmetry < NUM_SYMMETRIES);
-    //constexpr auto width = BOARD_SIZE;
-    //constexpr auto height = BOARD_SIZE;
-
-    // auto input_data = std::make_unique<const std::vector<float>>(gather_features(state, symmetry));
-    // std::vector<float> policy_data(OUTPUTS_POLICY * width * height);
-    // std::vector<float> value_data(OUTPUTS_VALUE * width * height);
-#ifdef USE_OPENCL_SELFCHECK
-    if (selfcheck) {
-        m_forward_cpu->forward(input_data, policy_data, value_data);
-    }
-    else {
-        m_forward->forward(input_data, policy_data, value_data);
-    }
-#else
-    m_forward->forward0(std::make_unique<const std::vector<float>>(gather_features(state, symmetry)), 
-                        state->get_to_move(), symmetry, result);
-    (void)selfcheck;
-#endif
-}
-*/
-
 void Network::process_output(
     std::vector<float>& policy_data,
     std::vector<float>& value_data,

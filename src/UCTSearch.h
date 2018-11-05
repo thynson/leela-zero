@@ -33,37 +33,11 @@
 #include "UCTNode.h"
 #include "Network.h"
 
-
-class SearchResult {
-public:
-    SearchResult() = default;
-    bool valid() const { return m_valid;  }
-    float eval() const { return m_eval;  }
-    static SearchResult from_eval(float eval) {
-        return SearchResult(eval);
-    }
-    static SearchResult from_score(float board_score) {
-        if (board_score > 0.0f) {
-            return SearchResult(1.0f);
-        } else if (board_score < 0.0f) {
-            return SearchResult(0.0f);
-        } else {
-            return SearchResult(0.5f);
-        }
-    }
-private:
-    explicit SearchResult(float eval)
-        : m_valid(true), m_eval(eval) {}
-    bool m_valid{false};
-    float m_eval{0.0f};
-};
-
 namespace TimeManagement {
     enum enabled_t {
         AUTO = -1, OFF = 0, ON = 1, FAST = 2, NO_PRUNING = 3
     };
 };
-
 
 struct BackupData {
     struct NodeFactor {
@@ -155,6 +129,7 @@ private:
     std::queue<std::unique_ptr<BackupData>> backup_queue;
     void backup(BackupData& bd);
     void failed_simulation(BackupData& bd);
+    int m_failed_simulations{ 0 };
 };
 
 class UCTWorker {

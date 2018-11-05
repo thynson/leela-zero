@@ -91,34 +91,6 @@ static void calculate_thread_count_gpu(boost::program_options::variables_map & v
     if (vm.count("batchsize")) {
         cfg_batch_size = vm["batchsize"].as<int>();
     }
-        /*
-        if (vm.count("batchsize")) {
-            cfg_batch_size = vm["batchsize"].as<int>();
-        } else {
-            cfg_batch_size = cfg_num_threads / gpu_count;
-
-            // no idea why somebody wants to use threads less than the number of GPUs
-            // but should at least prevent crashing
-            if (cfg_batch_size == 0) {
-                cfg_batch_size = 1;
-            }
-        }
-    } else {
-        if (vm.count("batchsize")) {
-            cfg_batch_size = vm["batchsize"].as<int>();
-        } else {
-            cfg_batch_size = 5;
-        }
-
-        cfg_num_threads = std::min(cfg_max_threads, cfg_batch_size * gpu_count);
-    }
-
-    if (cfg_num_threads < cfg_batch_size) {
-        printf("Threads number = %d must be larger than batch size = %d\n", cfg_num_threads, cfg_batch_size);
-        exit(EXIT_FAILURE);
-    }
-    */
-
 }
 #endif
 
@@ -155,6 +127,7 @@ static void parse_commandline(int argc, char *argv[]) {
         ("benchmark", "Test network and exit. Default args:\n-v3200 --noponder "
                       "-m0 -t1 -s1.")
         ("cpu-only", "Use CPU-only implementation and do not use GPU.")
+        ("frac-backup", "Enable fractional backup feature.")
         ;
 #ifdef USE_OPENCL
     po::options_description gpu_desc("GPU options");
@@ -248,6 +221,10 @@ static void parse_commandline(int argc, char *argv[]) {
 
     if (vm.count("benchmark")) {
         cfg_quiet = true;  // Set this early to avoid unnecessary output.
+    }
+
+    if (vm.count("frac-backup")) {
+        cfg_frac_backup = true;
     }
 
 #ifdef USE_TUNER

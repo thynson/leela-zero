@@ -51,6 +51,7 @@ extern std::vector<int> cfg_gpus;
 extern bool cfg_sgemm_exhaustive;
 extern bool cfg_tune_only;
 extern int cfg_batch_size;
+extern bool cfg_frac_backup;
 #ifdef USE_HALF
 enum class precision_t {
     AUTO, SINGLE, HALF

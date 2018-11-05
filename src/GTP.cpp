@@ -68,6 +68,7 @@ std::vector<int> cfg_gpus;
 bool cfg_sgemm_exhaustive;
 bool cfg_tune_only;
 int cfg_batch_size;
+bool cfg_frac_backup;
 #ifdef USE_HALF
 precision_t cfg_precision;
 #endif
@@ -126,6 +127,7 @@ void GTP::setup_default_parameters() {
 
     // we will re-calculate this on Leela.cpp
     cfg_batch_size = 5;
+    cfg_frac_backup = false;
 #ifdef USE_HALF
     cfg_precision = precision_t::AUTO;
 #endif
