@@ -96,6 +96,9 @@ public:
     UCTNodePointer(std::int16_t vertex, float policy);
     UCTNodePointer(const UCTNodePointer&) = delete;
 
+    void from_ptr(UCTNode * ptr) {
+        m_data.store(reinterpret_cast<std::uint64_t>(ptr) | POINTER);
+    }
 
     bool is_inflated() const {
         return is_inflated(m_data.load());

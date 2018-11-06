@@ -312,6 +312,7 @@ void UCTSearch::play_simulation(std::unique_ptr<GameState> currstate,
         auto move = node->get_move();
         currstate->play_move(move);
         if (move != FastBoard::PASS && currstate->superko()) {
+            node->expand_cancel();
             node->invalidate();
             failed_simulation(*bd);
             return;

@@ -366,8 +366,8 @@ std::pair<UCTNode*, float> UCTNode::uct_select_child(int color, bool is_root) {
     }
 
     //assert(best != nullptr);
-    //best->inflate();
     if (best == nullptr) { return std::make_pair(nullptr, 1.0f); }
+    //best->inflate();
     if (best == actual_best || !cfg_frac_backup) { return std::make_pair(best->get(), 1.0f); }
     return std::make_pair(best->get(), factor(q_of_best, policy_of_best, visits_of_best,
                                               q_of_actual_best, policy_of_actual_best, visits_of_actual_best,
