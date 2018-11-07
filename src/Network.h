@@ -140,7 +140,7 @@ private:
                                       std::vector<float>::iterator white,
                                       const int symmetry);
     // bool probe_cache(const GameState* const state, Network::Netresult& result);
-    std::pair<Netresult_ptr, int> Network::probe_cache0(const GameState* const state);
+    std::pair<Netresult_ptr, int> probe_cache0(const GameState* const state);
     std::unique_ptr<ForwardPipe>&& init_net(int channels,
                                             std::unique_ptr<ForwardPipe>&& pipe);
 #ifdef USE_HALF
