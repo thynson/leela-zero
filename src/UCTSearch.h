@@ -127,6 +127,7 @@ private:
     std::mutex m_mutex;
     std::condition_variable m_cv;
     std::queue<std::unique_ptr<BackupData>> backup_queue;
+    size_t max_queue_length;
     void backup(BackupData& bd);
     void failed_simulation(BackupData& bd);
     int m_failed_simulations{ 0 };
