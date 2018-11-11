@@ -102,16 +102,25 @@ template <typename net_t>
 void OpenCLScheduler<net_t>::initialize(const int channels) {
     // Launch the worker threads.  Minimum 1 worker per GPU, but use enough threads
     // so that we can at least concurrently schedule something to the GPU.
-    auto num_worker_threads = 2; // cfg_num_threads / cfg_batch_size / (m_opencl.size() + 1) + 1;
+    auto num_worker_threads = WORKER_THREADS; // cfg_num_threads / cfg_batch_size / (m_opencl.size() + 1) + 1;
     auto gnum = 0;
     for (auto i = 0; i < cfg_batch_size; i++) {
         batch_stats.emplace_back(new std::atomic<int>(0));
     }
+    for (auto i = 0; i < num_worker_threads; i++) {
+        m_forward_queue0[i].resize(m_opencl.size());
+        m_inputs[i].resize(m_opencl.size());
+        m_mutex[i].resize(m_opencl.size());
+    }
+
     for (auto & opencl : m_opencl) {
         opencl->initialize(channels, cfg_batch_size);
 
         for (auto i = unsigned{0}; i < num_worker_threads; i++) {
-            auto t = std::thread(&OpenCLScheduler<net_t>::batch_worker, this, gnum);
+            auto t = std::thread(&OpenCLScheduler<net_t>::batch_worker, this, gnum, i);
+            m_forward_queue0[i][gnum].resize(cfg_batch_size);
+            m_inputs[i][gnum].resize(Network::INPUT_CHANNELS * BOARD_SIZE * BOARD_SIZE * cfg_batch_size);
+            m_mutex[i][gnum] = new std::mutex;
             m_worker_threads.push_back(std::move(t));
         }
         gnum++;
@@ -292,7 +301,7 @@ std::atomic<size_t> batch_stats[2];
 #endif
 
 template <typename net_t>
-void OpenCLScheduler<net_t>::batch_worker(const size_t gnum) {
+void OpenCLScheduler<net_t>::batch_worker(const size_t gnum, const size_t worker_index) {
     constexpr auto in_size = Network::INPUT_CHANNELS * BOARD_SIZE * BOARD_SIZE;
     constexpr auto out_pol_size = Network::OUTPUTS_POLICY * BOARD_SIZE * BOARD_SIZE;
     constexpr auto out_val_size = Network::OUTPUTS_VALUE * BOARD_SIZE * BOARD_SIZE;
@@ -316,7 +325,7 @@ void OpenCLScheduler<net_t>::batch_worker(const size_t gnum) {
     // while that single eval was being processed, it means that we made
     // the wrong decision.  Wait 2ms longer next time
 
-    auto pickup_task = [this, gnum] () {
+    auto pickup_task = [this, gnum] (std::vector<net_t>& batch_input) {
         std::list<std::unique_ptr<ForwardQueueEntry0>> inputs;
         int count = 0;
 
@@ -371,12 +380,17 @@ void OpenCLScheduler<net_t>::batch_worker(const size_t gnum) {
         return inputs;
     };
 
-    auto batch_input = std::vector<float>();
-    auto batch_output_pol = std::vector<float>();
-    auto batch_output_val = std::vector<float>();
+    auto batch_input = std::vector<net_t>(in_size * cfg_batch_size);
+    auto batch_output_pol = std::vector<float>(out_pol_size * cfg_batch_size);
+    auto batch_output_val = std::vector<float>(out_val_size * cfg_batch_size);
 
     while (true) {
-        auto inputs = pickup_task();
+
+        batch_input.resize(in_size * cfg_batch_size);
+        batch_output_pol.resize(out_pol_size * cfg_batch_size);
+        batch_output_val.resize(out_val_size * cfg_batch_size);
+
+        auto inputs = pickup_task(batch_input);
         //m_cv0.notify_all();
         auto count = inputs.size();
 
@@ -391,6 +405,7 @@ void OpenCLScheduler<net_t>::batch_worker(const size_t gnum) {
         batch_input.resize(in_size * count);
         batch_output_pol.resize(out_pol_size * count);
         batch_output_val.resize(out_val_size * count);
+
         {
             size_t index = 0;
             for (auto it = begin(inputs); it != end(inputs); ++it) {

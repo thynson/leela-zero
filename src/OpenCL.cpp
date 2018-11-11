@@ -125,7 +125,7 @@ void OpenCL_Network<net_t>::add_weights(size_t layer,
 }
 
 template <typename net_t>
-void OpenCL_Network<net_t>::forward(const std::vector<float>& input,
+void OpenCL_Network<net_t>::forward(const std::vector<net_t>& input,
                              std::vector<float>& output_pol,
                              std::vector<float>& output_val,
                              OpenCLContext & opencl_context,

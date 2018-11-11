@@ -52,7 +52,7 @@ class OpenCLScheduler : public ForwardPipe {
     };
     class ForwardQueueEntry0 {
     public:
-        std::unique_ptr<const std::vector<float>> in;
+        //std::unique_ptr<const std::vector<float>> in;
         const int tomove;
         const int symmetry;
         Netresult_ptr result;
@@ -84,7 +84,7 @@ private:
     std::vector<std::unique_ptr<OpenCL_Network<net_t>>> m_networks;
     std::vector<std::unique_ptr<OpenCL<net_t>>> m_opencl;
 
-    std::mutex m_mutex;
+    //std::mutex m_mutex;
     std::condition_variable m_cv;
     std::condition_variable m_cv0;
 
@@ -95,7 +95,13 @@ private:
     std::atomic<bool> m_single_eval_in_progress{false};
 
     std::list<std::shared_ptr<ForwardQueueEntry>> m_forward_queue;
-    std::list<std::unique_ptr<ForwardQueueEntry0>> m_forward_queue0;
+
+#define WORKER_THREADS 2
+    std::vector<std::vector<std::unique_ptr<ForwardQueueEntry0>>> m_forward_queue0[WORKER_THREADS];
+    std::vector<std::vector<net_t>> m_inputs[WORKER_THREADS];
+    std::vector<std::mutex*> m_mutex[WORKER_THREADS];
+    std::atomic<size_t> m_loc_gpu{0};
+    std::atomic<size_t> m_loc_worker{0};
 
     std::list<std::thread> m_worker_threads;
     std::vector<std::atomic<int>*> batch_stats;
