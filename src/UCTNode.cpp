@@ -155,15 +155,15 @@ void UCTNode::virtual_loss() {
     m_virtual_loss += VIRTUAL_LOSS_COUNT;
 }
 
-void UCTNode::virtual_loss_undo() {
-    m_virtual_loss -= VIRTUAL_LOSS_COUNT;
+void UCTNode::virtual_loss_undo(int multiplicity) {
+    m_virtual_loss -= VIRTUAL_LOSS_COUNT * multiplicity;
 }
 
-void UCTNode::update(float eval, float factor, float sel_factor) {
+void UCTNode::update(float eval, int multiplicity, float factor, float sel_factor) {
     atomic_add(m_visits, double(factor));
     atomic_add(m_blackevals, double(eval*factor));
     atomic_add(m_sel_visits, double(sel_factor));
-    virtual_loss_undo();
+    virtual_loss_undo(multiplicity);
 }
 
 bool UCTNode::has_children() const {

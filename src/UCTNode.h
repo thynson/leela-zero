@@ -70,8 +70,8 @@ public:
     float get_raw_eval(int tomove, int virtual_loss = 0) const;
     float get_net_eval(int tomove) const;
     void virtual_loss();
-    void virtual_loss_undo();
-    void update(float eval, float factor = 1.0f, float sel_factor = 1.0f);
+    void virtual_loss_undo(int multiplicity = 1);
+    void update(float eval, int multiplicity, float factor = 1.0f, float sel_factor = 1.0f);
 
     // Defined in UCTNodeRoot.cpp, only to be called on m_root in UCTSearch
     void randomize_first_proportionally();

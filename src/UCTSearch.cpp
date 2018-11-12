@@ -160,6 +160,7 @@ void UCTSearch::update_root() {
     // Definition of m_playouts is playouts per search call.
     // So reset this count now.
     m_playouts = 0;
+    m_positions = 0;
 
 #ifndef NDEBUG
     auto start_nodes = m_root->count_nodes_and_clear_expand_state();
@@ -201,12 +202,11 @@ float UCTSearch::get_min_psa_ratio() const {
 
 void UCTSearch::backup(BackupData& bd) {
     auto path = bd.path;
-    auto eval = bd.eval;
     auto factor = 1.0f;
     auto first = true;
     for (auto nf = path.rbegin(); nf != path.rend(); ++nf) {
         auto sel_factor = factor * nf->factor;
-        nf->node->update(eval, factor, sel_factor);
+        nf->node->update(bd.eval, bd.multiplicity, factor, sel_factor);
         if (first) { nf->node->expand_done(); first = false; }
         factor = sel_factor;
     }
