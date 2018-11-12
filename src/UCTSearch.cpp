@@ -160,6 +160,7 @@ void UCTSearch::update_root() {
     // Definition of m_playouts is playouts per search call.
     // So reset this count now.
     m_playouts = 0;
+    m_positions = 0;
 
 #ifndef NDEBUG
     auto start_nodes = m_root->count_nodes_and_clear_expand_state();
