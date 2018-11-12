@@ -93,6 +93,7 @@ public:
     void increment_playouts();
     void play_simulation(std::unique_ptr<GameState> currstate, UCTNode* node, int thread_num);
     void backup();
+    int m_positions{0};
 
 private:
     float get_min_psa_ratio() const;

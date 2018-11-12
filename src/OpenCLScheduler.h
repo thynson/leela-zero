@@ -52,7 +52,7 @@ class OpenCLScheduler : public ForwardPipe {
     };
     class ForwardQueueEntry0 {
     public:
-        //std::unique_ptr<const std::vector<float>> in;
+        std::unique_ptr<const std::vector<float>> in;
         const int tomove;
         const int symmetry;
         Netresult_ptr result;
@@ -80,11 +80,11 @@ public:
                               unsigned int outputs,
                               std::shared_ptr<const ForwardPipeWeights> weights);
 private:
-    bool m_running = true;
+    std::atomic<bool> m_running{true};
     std::vector<std::unique_ptr<OpenCL_Network<net_t>>> m_networks;
     std::vector<std::unique_ptr<OpenCL<net_t>>> m_opencl;
 
-    //std::mutex m_mutex;
+    std::mutex m_mutex;
     std::condition_variable m_cv;
     std::condition_variable m_cv0;
 
@@ -95,18 +95,14 @@ private:
     std::atomic<bool> m_single_eval_in_progress{false};
 
     std::list<std::shared_ptr<ForwardQueueEntry>> m_forward_queue;
-
-#define WORKER_THREADS 2
-    std::vector<std::vector<std::unique_ptr<ForwardQueueEntry0>>> m_forward_queue0[WORKER_THREADS];
-    std::vector<std::vector<net_t>> m_inputs[WORKER_THREADS];
-    std::vector<std::mutex*> m_mutex[WORKER_THREADS];
-    std::atomic<size_t> m_loc_gpu{0};
-    std::atomic<size_t> m_loc_worker{0};
+    std::list<std::unique_ptr<ForwardQueueEntry0>> m_forward_queue0;
+    std::atomic<int> m_max_queue_size;
 
     std::list<std::thread> m_worker_threads;
     std::vector<std::atomic<int>*> batch_stats;
+    std::vector<std::atomic<int>*> pickup_stats;
 
-    void batch_worker(const size_t gnum);
+    void batch_worker(const size_t gnum, const size_t i);
     void push_input_convolution(unsigned int filter_size,
                                 unsigned int channels,
                                 unsigned int outputs,

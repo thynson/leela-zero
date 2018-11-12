@@ -129,6 +129,7 @@ void OpenCL_Network<net_t>::forward(const std::vector<net_t>& input,
                              std::vector<float>& output_pol,
                              std::vector<float>& output_val,
                              OpenCLContext & opencl_context,
+                             std::condition_variable& cv,
                              const int batch_size) {
     constexpr auto tiles = WINOGRAD_P;
     constexpr auto one_plane = NUM_INTERSECTIONS * sizeof(net_t);
@@ -189,11 +190,10 @@ void OpenCL_Network<net_t>::forward(const std::vector<net_t>& input,
     cl::Buffer & MBuffer = opencl_context.m_MBuffer;
     cl::CommandQueue & queue = opencl_context.m_commandqueue;
 
-    std::vector<net_t> net_t_input(input.size());
-    std::copy(begin(input), end(input), begin(net_t_input));
+    std::unique_lock<std::mutex> lock(m_queue_finish_mutex);
 
     const auto inSize = sizeof(net_t) * input.size();
-    queue.enqueueWriteBuffer(inBuffer, CL_FALSE, 0, inSize, net_t_input.data());
+    queue.enqueueWriteBuffer(inBuffer, CL_FALSE, 0, inSize, input.data());
 
     auto skip_in_trans = false;
     for (auto iter = cbegin(m_layers); iter != cend(m_layers); iter++) {
@@ -286,13 +286,14 @@ void OpenCL_Network<net_t>::forward(const std::vector<net_t>& input,
     auto pinnedOutBufferHost_val = queue.enqueueMapBuffer(
         opencl_context.m_pinnedOutBuffer_val, CL_FALSE,
         CL_MAP_READ, 0, batch_size * finalSize_val);
+    lock.unlock();
 
-    {
-        // Finish call is usually a busy wait. When using multiple threads
-        // use the lock to avoid busy waiting with all threads.
-        std::lock_guard<std::mutex> lock(m_queue_finish_mutex);
-        queue.finish();
-    }
+    //lock.lock();
+    queue.finish();
+    //lock.unlock();
+    
+    if (--m_occupied == 0) idle_count++; 
+    cv.notify_all();
 
     auto polptr = static_cast<net_t*>(pinnedOutBufferHost_pol);
     auto valptr = static_cast<net_t*>(pinnedOutBufferHost_val);

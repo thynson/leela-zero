@@ -205,7 +205,6 @@ void UCTSearch::backup(BackupData& bd) {
     auto factor = 1.0f;
     auto first = true;
     for (auto nf = path.rbegin(); nf != path.rend(); ++nf) {
-        nf->node->virtual_loss_undo();
         auto sel_factor = factor * nf->factor;
         nf->node->update(eval, factor, sel_factor);
         if (first) { nf->node->expand_done(); first = false; }
@@ -850,11 +849,12 @@ int UCTSearch::think(int color, passflag_t passflag) {
     Time elapsed;
     int elapsed_centis = Time::timediff_centis(start, elapsed);
     if (elapsed_centis+1 > 0) {
-        myprintf("%7.2f visits, %d nodes, %d playouts, %.0f n/s\n\n",
+        myprintf("%7.2f visits, %d nodes, %d playouts, %.0f n/s, %.0f pos/s\n\n",
                  m_root->get_visits(),
                  static_cast<int>(m_nodes),
                  static_cast<int>(m_playouts),
-                 (m_playouts * 100.0) / (elapsed_centis+1));
+                 (m_playouts * 100.0) / (elapsed_centis+1),
+                 (m_positions * 100.0) / (elapsed_centis+1));
 
         m_network.nncache_dump_stats();
         myprintf("failed simulations: %d\n", m_failed_simulations);

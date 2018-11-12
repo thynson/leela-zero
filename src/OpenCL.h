@@ -73,6 +73,8 @@ private:
 template <typename net_t>
 class OpenCL_Network {
 public:
+    std::atomic<int> m_occupied{0};
+    std::atomic<int> idle_count{0};
     OpenCL_Network(OpenCL<net_t> & opencl) : m_opencl(opencl) {}
     OpenCL<net_t> & getOpenCL() {
         return m_opencl;
@@ -138,6 +140,7 @@ public:
             std::vector<float>& output_pol,
             std::vector<float>& output_val,
             OpenCLContext & opencl_context,
+            std::condition_variable& cv,
             const int batch_size = 1);
 
 private:

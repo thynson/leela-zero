@@ -102,25 +102,20 @@ template <typename net_t>
 void OpenCLScheduler<net_t>::initialize(const int channels) {
     // Launch the worker threads.  Minimum 1 worker per GPU, but use enough threads
     // so that we can at least concurrently schedule something to the GPU.
-    auto num_worker_threads = WORKER_THREADS; // cfg_num_threads / cfg_batch_size / (m_opencl.size() + 1) + 1;
-    auto gnum = 0;
+    auto num_worker_threads = 2; // cfg_num_threads / cfg_batch_size / (m_opencl.size() + 1) + 1;
+    m_max_queue_size = cfg_batch_size * m_opencl.size() * num_worker_threads;// +cfg_batch_size - cfg_num_threads + 0;
+    myprintf("max queue size: %d\n", m_max_queue_size.load());
+    // num_worker_threads + 1 ... more worker threads don't help? GPU deal with two forward passes in parallel?
     for (auto i = 0; i < cfg_batch_size; i++) {
         batch_stats.emplace_back(new std::atomic<int>(0));
+        pickup_stats.emplace_back(new std::atomic<int>(0));
     }
-    for (auto i = 0; i < num_worker_threads; i++) {
-        m_forward_queue0[i].resize(m_opencl.size());
-        m_inputs[i].resize(m_opencl.size());
-        m_mutex[i].resize(m_opencl.size());
-    }
-
+    auto gnum = 0;
     for (auto & opencl : m_opencl) {
         opencl->initialize(channels, cfg_batch_size);
 
         for (auto i = unsigned{0}; i < num_worker_threads; i++) {
             auto t = std::thread(&OpenCLScheduler<net_t>::batch_worker, this, gnum, i);
-            m_forward_queue0[i][gnum].resize(cfg_batch_size);
-            m_inputs[i][gnum].resize(Network::INPUT_CHANNELS * BOARD_SIZE * BOARD_SIZE * cfg_batch_size);
-            m_mutex[i][gnum] = new std::mutex;
             m_worker_threads.push_back(std::move(t));
         }
         gnum++;
@@ -138,10 +133,16 @@ OpenCLScheduler<net_t>::~OpenCLScheduler() {
         x.join();
     }
 
+    myprintf("batch stats: ");
     for (auto count : batch_stats) {
         myprintf("%d, ", count->load());
     }
-    myprintf("\n");
+    myprintf("\npickup stats: ");
+    for (auto count : pickup_stats) {
+        myprintf("%d, ", count->load());
+    }
+    myprintf("\nidle count: %d", m_networks[0]->idle_count.load());
+    //myprintf("\nmax queue size: %d", m_max_queue_size.load());
 }
 
 template<typename net_t>
@@ -285,15 +286,17 @@ void OpenCLScheduler<net_t>::forward0(std::unique_ptr<const std::vector<float>> 
                                       const int tomove,
                                       const int symmetry,
                                       Netresult_ptr result) {
+    // auto max_size = cfg_batch_size * m_opencl.size() * 2;
+    m_search->m_positions++;
     std::unique_lock<std::mutex> lk(m_mutex);
     m_forward_queue0.push_back(std::make_unique<ForwardQueueEntry0>(
         std::move(input), tomove, symmetry, result));
-    auto max_size = cfg_batch_size * m_opencl.size() * 2;
-    if (m_forward_queue0.size() >= max_size) {
-        m_cv0.wait(lk, [&] { return m_forward_queue0.size() < max_size; });
-    }
-    lk.unlock();
     m_cv.notify_one();
+    if ((int)m_forward_queue0.size() >= m_max_queue_size.load()) {
+        m_cv0.wait(lk, [&] { return (int)m_forward_queue0.size() < m_max_queue_size.load(); });
+        lk.unlock();
+        m_search->backup();
+    }
 }
 
 #ifndef NDEBUG
@@ -301,102 +304,79 @@ std::atomic<size_t> batch_stats[2];
 #endif
 
 template <typename net_t>
-void OpenCLScheduler<net_t>::batch_worker(const size_t gnum, const size_t worker_index) {
+void OpenCLScheduler<net_t>::batch_worker(const size_t gnum, const size_t i) {
     constexpr auto in_size = Network::INPUT_CHANNELS * BOARD_SIZE * BOARD_SIZE;
     constexpr auto out_pol_size = Network::OUTPUTS_POLICY * BOARD_SIZE * BOARD_SIZE;
     constexpr auto out_val_size = Network::OUTPUTS_VALUE * BOARD_SIZE * BOARD_SIZE;
 
     OpenCLContext context;
 
-    // batch scheduling heuristic.
-    // Returns the batch picked up from the queue (m_forward_queue)
-    // 1) Wait for m_waittime milliseconds for full batch
-    // 2) if we don't have a full batch then just do a single eval
-    //
-    // The purpose of m_waittime is to prevent the system from deadlocking
-    // because we were waiting for a job too long, while the job is never
-    // going to come due to a control dependency (e.g., evals stuck on a
-    // critical path).  To do so:
-    //
-    // 1) if we picked up a single eval, and ended up that there were no
-    // new incoming requests while handling the single eval, it means that
-    // we hit the critical path.  Wait 1ms shorter next time
-    // 2) if we picked up a single eval, but were getting additional evals
-    // while that single eval was being processed, it means that we made
-    // the wrong decision.  Wait 2ms longer next time
-
-    auto pickup_task = [this, gnum] (std::vector<net_t>& batch_input) {
-        std::list<std::unique_ptr<ForwardQueueEntry0>> inputs;
-        int count = 0;
-
-        std::unique_lock<std::mutex> lk(m_mutex);
-        while (true) {
-            if (!m_running) return inputs;
-            int queue_size = m_forward_queue0.size();
-            if (!queue_size) {
-                m_cv.wait(lk,
-                    [this, &queue_size] { queue_size = m_forward_queue0.size();
-                                          return !m_running || queue_size > 0; });
-            }
-            count = std::min(queue_size, cfg_batch_size);
-            break;
-            /*
-            if (count >= cfg_batch_size) {
-                count = cfg_batch_size;
-                break;
-            }
-
-            bool timeout = !m_cv.wait_for(
-                lk,
-                std::chrono::milliseconds(m_waittime),
-                [this] () {
-                    return !m_running || static_cast<int>(m_forward_queue.size()) >= cfg_batch_size;
-                }
-            );
-
-            if (!m_forward_queue.empty()) {
-                if (timeout && m_single_eval_in_progress.exchange(true) == false) {
-                    if (m_waittime > 1) {
-                        m_waittime--;
-                    }
-                    count = 1;
-                    break;
-                }
-            }
-            */
-        }
-        auto end = begin(m_forward_queue0);
-        std::advance(end, count);
-        std::move(begin(m_forward_queue0), end, std::back_inserter(inputs));
-        m_forward_queue0.erase(begin(m_forward_queue0), end);
-        
-        if (count) { (*batch_stats[count - 1])++; }
-        /*
-        for (auto count : batch_stats) {
-            myprintf("%d, ", count->load());
-        }
-        myprintf("\n");
-        */
-        return inputs;
-    };
-
     auto batch_input = std::vector<net_t>(in_size * cfg_batch_size);
     auto batch_output_pol = std::vector<float>(out_pol_size * cfg_batch_size);
     auto batch_output_val = std::vector<float>(out_val_size * cfg_batch_size);
 
+    auto pickup_task = [this, gnum, in_size, i](std::vector<net_t>&batch_in) {
+        std::vector<std::unique_ptr<ForwardQueueEntry0>> inputs;
+        inputs.reserve(cfg_batch_size);
+        auto it = begin(inputs);
+        int count = 0;
+        int remaining = cfg_batch_size;
+
+        std::unique_lock<std::mutex> lk(m_mutex, std::defer_lock);
+        while (remaining) {
+            bool idle = !(m_networks[gnum]->m_occupied.load()) && inputs.size() > 0;
+            if (idle || !m_running) break;
+            lk.lock();
+            int queue_size = m_forward_queue0.size();
+            if (!queue_size) {
+                m_cv.wait(lk,
+                    [this, gnum, &queue_size, &idle, &inputs] {
+                    queue_size = m_forward_queue0.size();
+                    idle = !(m_networks[gnum]->m_occupied.load()) && inputs.size() > 0;
+                    return !m_running || queue_size > 0 || idle; });
+            }
+            if (idle || !m_running) break;
+
+            count = std::min(queue_size, remaining);
+            auto end = begin(m_forward_queue0);
+            std::advance(end, count);
+            std::move(begin(m_forward_queue0), end, std::back_inserter(inputs));
+            m_forward_queue0.erase(begin(m_forward_queue0), end);
+            lk.unlock();
+            if (count) { (*pickup_stats[count - 1])++; }
+
+            m_max_queue_size -= count;
+            remaining -= count;
+
+            while (it != inputs.end()) {
+                std::transform((*it)->in->begin(), (*it)->in->end(), std::back_inserter(batch_in),
+                    [](float x) {return (net_t)x; });
+                ++it;
+            }
+        }
+        ++(m_networks[gnum]->m_occupied);
+        //myprintf("max queue size: %d - worker %d picking up\n", m_max_queue_size.load(), i);
+        m_max_queue_size -= remaining;
+        //myprintf("max queue size: %d - worker %d pickup finished\n", m_max_queue_size.load(), i);
+        return inputs;
+    };
+
     while (true) {
 
-        batch_input.resize(in_size * cfg_batch_size);
-        batch_output_pol.resize(out_pol_size * cfg_batch_size);
-        batch_output_val.resize(out_val_size * cfg_batch_size);
-
+        batch_input.resize(0);
         auto inputs = pickup_task(batch_input);
         //m_cv0.notify_all();
         auto count = inputs.size();
+        if (count) { (*batch_stats[count - 1])++; }
 
-        if (!m_running) {
-            return;
+        /*
+        for (auto count : batch_stats) {
+        myprintf("%d, ", count->load());
         }
+        myprintf("\n");
+        */
+
+        if (!m_running) return;
 
 #ifndef NDEBUG
         batch_stats[static_cast<int>(count) == cfg_batch_size ? 1 : 0]++;
@@ -407,20 +387,12 @@ void OpenCLScheduler<net_t>::batch_worker(const size_t gnum, const size_t worker
         batch_output_val.resize(out_val_size * count);
 
         {
-            size_t index = 0;
-            for (auto it = begin(inputs); it != end(inputs); ++it) {
-                std::copy(begin(*((*it)->in)), end(*((*it)->in)), begin(batch_input) + in_size * index);
-                index++;
-            }
-        }
-
-        {
             m_networks[gnum]->forward(
-                batch_input, batch_output_pol, batch_output_val, context, count);
+                batch_input, batch_output_pol, batch_output_val, context, m_cv, count);
         }
 
         {
-            size_t index = 0;
+            auto index = 0;
             for (auto it = begin(inputs); it != end(inputs); ++it) {
                 std::vector<float> out_p(begin(batch_output_pol) + out_pol_size * index,
                                          begin(batch_output_pol) + out_pol_size * (index + 1));
@@ -431,8 +403,10 @@ void OpenCLScheduler<net_t>::batch_worker(const size_t gnum, const size_t worker
             }
         }
 
-        m_search->backup(); 
+        m_max_queue_size += cfg_batch_size;
+        //myprintf("max queue size: %d - worker %d\n", m_max_queue_size.load(), i);
         m_cv0.notify_all();
+        m_search->backup();
     }
 }
 
