@@ -191,7 +191,8 @@ void UCTNode::set_policy(float policy) {
 
 double UCTNode::get_visits(visit_type type) const {
     if (type == SEL) { return m_sel_visits; }
-    else { return m_visits; }
+    else if (type == WR) { return m_visits; }
+    else { return m_visits + m_virtual_loss; }
 }
 
 float UCTNode::get_raw_eval(int tomove, int virtual_loss) const {
@@ -326,10 +327,12 @@ std::pair<UCTNode*, float> UCTNode::uct_select_child(int color, bool is_root) {
         }
         auto psa = child.get_policy();
         total_visited_policy += psa;
-        auto denom = 1.0 + child.get_visits();
+        auto denom = 1.0 + child.get_visits(VL);
+        auto actual_denom = 1.0 + child.get_visits();
         auto puct = cfg_puct * psa * (numerator / denom);
+        auto actual_puct = cfg_puct * psa * (numerator / actual_denom);
         auto value = winrate + puct;
-        auto actual_value = actual_winrate + puct;
+        auto actual_value = actual_winrate + actual_puct;
         /*
         if (child.is_inflated() && child->m_expand_state.load() == ExpandState::EXPANDING) {
             // Someone else is expanding this node, never select it
@@ -347,28 +350,18 @@ std::pair<UCTNode*, float> UCTNode::uct_select_child(int color, bool is_root) {
         }
         auto to_expand = false;
         if (value > best_value) {
-            if (!has_visits) {
-                child.inflate();
-                if (child->acquire_expanding()) {
-                    to_expand = true;
-                }
-                else {
-                    continue;
-                }
-            }
             best = &child;
             best_value = value;
             actual_value_of_best = actual_value;
             q_of_best = actual_winrate;
             policy_of_best = psa;
             visits_of_best = child.get_visits();
-            if (to_expand) { break; }
         }
     }
 
     //assert(best != nullptr);
-    if (best == nullptr) return std::make_pair(nullptr, 1.0f);
-    //best->inflate();
+    //if (best == nullptr) return std::make_pair(nullptr, 1.0f);
+    best->inflate();
     if (best == actual_best || !cfg_frac_backup) return std::make_pair(best->get(), 1.0f);
     return std::make_pair(best->get(), factor(q_of_best, policy_of_best, visits_of_best,
                                               q_of_actual_best, policy_of_actual_best, visits_of_actual_best,

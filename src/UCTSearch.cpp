@@ -215,23 +215,29 @@ void UCTSearch::backup(BackupData& bd) {
 
 void UCTSearch::backup() {
     std::unique_lock<std::mutex> lk(m_mutex);
-    while (!backup_queue.empty() && backup_queue.front()->netresult->ready.load()) {
+    while (!backup_queue.empty() && 
+        (!backup_queue.front()->multiplicity || backup_queue.front()->netresult->ready.load())) {
         auto bd = std::move(backup_queue.front());
         backup_queue.pop();
         lk.unlock();
-        auto node = bd->path.back().node;
-        auto had_children = node->has_children();
-        node->create_children(bd->netresult->result, bd->symmetry, m_nodes, *bd->state, 
-            bd->path.size() == 1 ? 0.0 // root
-            : get_min_psa_ratio());
-        if (!had_children) {
-            auto eval = bd->netresult->result.winrate;
-            bd->eval = (bd->state->get_to_move() == FastBoard::BLACK ? eval : 1.0f - eval);
-            backup(*bd);
+        if (bd->multiplicity) {
+            auto node = bd->path.back().node;
+            auto had_children = node->has_children();
+            node->create_children(bd->netresult->result, bd->symmetry, m_nodes, *bd->state,
+                bd->path.size() == 1 ? 0.0 // root
+                : get_min_psa_ratio());
+            if (!had_children) {
+                auto eval = bd->netresult->result.winrate;
+                bd->eval = (bd->state->get_to_move() == FastBoard::BLACK ? eval : 1.0f - eval);
+                backup(*bd);
+            }
+            else {
+                failed_simulation(*bd);
+                bd->path.back().node->expand_done();
+            }
         }
         else {
             failed_simulation(*bd);
-            bd->path.back().node->expand_done();
         }
         lk.lock();
     }
@@ -273,8 +279,12 @@ void UCTSearch::play_simulation(std::unique_ptr<GameState> currstate,
         // expand a node
         const auto min_psa_ratio = is_root ? 0.0 : get_min_psa_ratio();
         if (node->expandable(min_psa_ratio)) {
-            if ((node->get_visits(WR) > 0.0 || is_root) && !node->acquire_expanding()) {
-                failed_simulation(*bd); m_failed_simulations++; return;
+            if (!node->acquire_expanding()) {
+                m_failed_simulations++;
+                bd->multiplicity = 0;
+                std::unique_lock<std::mutex> lk(m_mutex);
+                backup_queue.push(std::move(bd));
+                return;
             }
 
             const auto result_sym = m_network.get_output0(

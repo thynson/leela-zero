@@ -50,7 +50,7 @@ struct BackupData {
     Netresult_ptr netresult;
     int symmetry;
     std::unique_ptr<GameState> state;
-    int multiplicity;
+    int multiplicity{1};
 };
 
 class UCTSearch {

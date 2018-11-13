@@ -42,8 +42,8 @@ class UCTNode;
 // All methods should be thread-safe except destructor and when
 // the instanced is 'moved from'.
 
-enum visit_type : bool {
-    SEL = 0, WR = 1 // for selection or for winrate
+enum visit_type : int {
+    SEL, WR, VL // for selection, for winrate, or for selection with virtual loss
 };
 
 class UCTNodePointer {
