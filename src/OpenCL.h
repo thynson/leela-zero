@@ -177,6 +177,7 @@ private:
     // because queue.finish() is a busy wait and having a lot of threads
     // waiting here is counterproductive CPU-wise.  At least std::mutex
     // isn't busy wait so it should be better.
+    std::mutex m_enqueue_mutex;
     std::mutex m_queue_finish_mutex;
     std::vector<Layer> m_layers;
 };

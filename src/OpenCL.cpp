@@ -190,7 +190,7 @@ void OpenCL_Network<net_t>::forward(const std::vector<net_t>& input,
     cl::Buffer & MBuffer = opencl_context.m_MBuffer;
     cl::CommandQueue & queue = opencl_context.m_commandqueue;
 
-    std::unique_lock<std::mutex> lock(m_queue_finish_mutex);
+    std::unique_lock<std::mutex> enqueue_lock(m_enqueue_mutex);
 
     const auto inSize = sizeof(net_t) * input.size();
     queue.enqueueWriteBuffer(inBuffer, CL_FALSE, 0, inSize, input.data());
@@ -286,11 +286,14 @@ void OpenCL_Network<net_t>::forward(const std::vector<net_t>& input,
     auto pinnedOutBufferHost_val = queue.enqueueMapBuffer(
         opencl_context.m_pinnedOutBuffer_val, CL_FALSE,
         CL_MAP_READ, 0, batch_size * finalSize_val);
-    lock.unlock();
 
-    //lock.lock();
+    //std::unique_lock<std::mutex> enqueue_lock(m_enqueue_mutex);
+    enqueue_lock.unlock();
+    //std::unique_lock<std::mutex> finish_lock(m_queue_finish_mutex);
+     enqueue_lock.lock();
     queue.finish();
-    //lock.unlock();
+    //finish_lock.unlock();
+     enqueue_lock.unlock();
     
     if (--m_occupied == 0) idle_count++; 
     cv.notify_all();
