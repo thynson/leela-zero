@@ -416,6 +416,7 @@ UCTNode& UCTNode::get_best_root_child(int color) {
 
 size_t UCTNode::count_nodes_and_clear_expand_state() {
     auto nodecount = size_t{0};
+    m_virtual_loss = 0;
     nodecount += m_children.size();
     if (expandable()) {
         m_expand_state = ExpandState::INITIAL;

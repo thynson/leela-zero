@@ -293,7 +293,8 @@ void OpenCLScheduler<net_t>::forward0(std::unique_ptr<const std::vector<float>> 
         std::move(input), tomove, symmetry, result));
     m_cv.notify_one();
     if ((int)m_forward_queue0.size() >= m_max_queue_size.load()) {
-        m_cv0.wait(lk, [&] { return (int)m_forward_queue0.size() < m_max_queue_size.load(); });
+        m_cv0.wait(lk, [&] { return (int)m_forward_queue0.size() < m_max_queue_size.load()
+            || !m_search->m_run; });
         lk.unlock();
         m_search->backup();
     }
@@ -406,7 +407,8 @@ void OpenCLScheduler<net_t>::batch_worker(const size_t gnum, const size_t i) {
         m_max_queue_size += cfg_batch_size;
         //myprintf("max queue size: %d - worker %d\n", m_max_queue_size.load(), i);
         m_cv0.notify_all();
-        m_search->backup();
+        m_search->m_cv.notify_one();
+        //m_search->backup();
     }
 }
 

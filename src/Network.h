@@ -97,6 +97,7 @@ public:
     void nncache_resize(int max_count);
     void nncache_dump_stats() { m_nncache.dump_stats(); }
     void set_search(UCTSearch* search) { m_forward->m_search = search; m_forward->m_network = this; }
+    void notify() { m_forward->m_cv0.notify_all(); }
     void process_output(std::vector<float>& policy_data,
         std::vector<float>& value_data,
         const int tomove,

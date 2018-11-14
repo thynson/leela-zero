@@ -86,7 +86,7 @@ private:
 
     std::mutex m_mutex;
     std::condition_variable m_cv;
-    std::condition_variable m_cv0;
+    //std::condition_variable m_cv0;
 
     // start with 10 milliseconds : lock protected
     int m_waittime{10};
