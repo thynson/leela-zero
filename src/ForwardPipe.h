@@ -21,6 +21,7 @@
 
 #include <memory>
 #include <vector>
+#include <condition_variable>
 
 #include "config.h"
 #include "NNCache.h"

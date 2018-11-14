@@ -787,7 +787,7 @@ int UCTSearch::think(int color, passflag_t passflag) {
     if (m_root->expandable()) {
         play_simulation(std::make_unique<GameState>(m_rootstate), m_root.get(), 0);
         std::unique_lock<std::mutex> lk(m_mutex);
-        m_cv.wait(lk, [&lk, this] { return !backup_queue.empty() && backup_queue.front()->netresult->ready; });
+        m_cv.wait(lk, [&lk, this] { return backup_queue.empty() || backup_queue.front()->netresult->ready; });
         lk.unlock();
         backup();
     }
@@ -888,7 +888,7 @@ void UCTSearch::ponder() {
     if (m_root->expandable()) { 
         play_simulation(std::make_unique<GameState>(m_rootstate), m_root.get(), 0); 
         std::unique_lock<std::mutex> lk(m_mutex);
-        m_cv.wait(lk, [&lk, this] { return !backup_queue.empty() && backup_queue.front()->netresult->ready; });
+        m_cv.wait(lk, [&lk, this] { return backup_queue.empty() || backup_queue.front()->netresult->ready; });
         lk.unlock();
         backup();
     }
