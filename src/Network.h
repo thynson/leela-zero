@@ -70,7 +70,8 @@ public:
     std::pair<Netresult_ptr, int> get_output0(const GameState* const state,
                          const Ensemble ensemble,
                          const int symmetry = -1,
-                         const bool skip_cache = false);
+                         const bool skip_cache = false,
+                         const bool force_selfcheck = false);
 
     static constexpr auto INPUT_MOVES = 8;
     static constexpr auto INPUT_CHANNELS = 2 * INPUT_MOVES + 2;
