@@ -66,7 +66,8 @@ public:
     Netresult get_output(const GameState* const state,
         const Ensemble ensemble,
         const int symmetry = -1,
-        const bool skip_cache = false);
+        const bool skip_cache = false,
+        const bool force_selfcheck = false);
     std::pair<Netresult_ptr, int> get_output0(const GameState* const state,
                          const Ensemble ensemble,
                          const int symmetry = -1,
@@ -97,6 +98,7 @@ public:
     void nncache_resize(int max_count);
     void nncache_dump_stats() { m_nncache.dump_stats(); }
     void set_search(UCTSearch* search) { m_forward->m_search = search; m_forward->m_network = this; }
+    void notify() { m_forward->m_cv0.notify_all(); }
     void process_output(std::vector<float>& policy_data,
         std::vector<float>& value_data,
         const int tomove,

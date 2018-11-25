@@ -40,6 +40,7 @@
 using namespace Utils;
 
 constexpr int UCTSearch::UNLIMITED_PLAYOUTS;
+
 class OutputAnalysisData {
 public:
     OutputAnalysisData(const std::string& move, int visits,
@@ -190,15 +191,16 @@ float UCTSearch::get_min_psa_ratio() const {
     if (mem_full > 0.5f) {
         // Memory is almost exhausted, trim more aggressively.
         if (mem_full > 0.95f) {
+            // if completely full just stop expansion by returning an impossible number
+            if (mem_full >= 1.0f) {
+                return 2.0f;
+            }
             return 0.01f;
         }
         return 0.001f;
     }
     return 0.0f;
 }
-
-//calculate factor in uct_select_child..
-//expanding node could make deadlock?
 
 void UCTSearch::backup(BackupData& bd) {
     auto path = bd.path;
@@ -215,8 +217,7 @@ void UCTSearch::backup(BackupData& bd) {
 
 void UCTSearch::backup() {
     std::unique_lock<std::mutex> lk(m_mutex);
-    while (!backup_queue.empty() && 
-        (!backup_queue.front()->multiplicity || backup_queue.front()->netresult->ready.load())) {
+    while (m_run && !backup_queue.empty() && backup_queue.front()->netresult->ready.load()) {
         auto bd = std::move(backup_queue.front());
         backup_queue.pop();
         lk.unlock();
@@ -363,7 +364,7 @@ void UCTSearch::dump_stats(FastState & state, UCTNode & parent) {
             node->get_policy() * 100.0f,
             pv.c_str());
     }
-    tree_stats(parent);
+    //tree_stats(parent);
 }
 
 void UCTSearch::output_analysis(FastState & state, UCTNode & parent) {
@@ -793,18 +794,21 @@ int UCTSearch::think(int color, passflag_t passflag) {
 
     myprintf("Thinking at most %.1f seconds...\n", time_for_move/100.0f);
 
+    m_run = true;
     // create a sorted list of legal moves (make sure we
     // play something legal and decent even in time trouble)
-    if (m_root->expandable()) { play_simulation(std::make_unique<GameState>(m_rootstate), m_root.get(), 0); }
-    std::unique_lock<std::mutex> lk(m_mutex);
-    m_cv.wait(lk, [this] { return backup_queue.empty(); });
-    lk.unlock();
+    if (m_root->expandable()) {
+        play_simulation(std::make_unique<GameState>(m_rootstate), m_root.get(), 0);
+        std::unique_lock<std::mutex> lk(m_mutex);
+        m_cv.wait(lk, [&lk, this] { return backup_queue.empty() || backup_queue.front()->netresult->ready; });
+        lk.unlock();
+        backup();
+    }
     m_root->prepare_root_node(m_network, color, m_nodes, m_rootstate);
 
-    m_run = true;
     int cpus = cfg_num_threads;
     ThreadGroup tg(thread_pool);
-    for (int i = 1; i < cpus; i++) {
+    for (int i = 1; i <= cpus; i++) {
         tg.add_task(UCTWorker(m_rootstate, this, m_root.get(), i));
     }
 
@@ -812,10 +816,15 @@ int UCTSearch::think(int color, passflag_t passflag) {
     auto last_update = 0;
     auto last_output = 0;
     do {
-        play_simulation(std::make_unique<GameState>(m_rootstate), m_root.get(), 0);
+        //play_simulation(std::make_unique<GameState>(m_rootstate), m_root.get(), 0);
 
         Time elapsed;
         int elapsed_centis = Time::timediff_centis(start, elapsed);
+        std::this_thread::sleep_for(std::chrono::milliseconds(
+            std::min(std::min(cfg_analyze_interval_centis - (elapsed_centis - last_output),
+                250 - (elapsed_centis - last_update)), time_for_move - elapsed_centis) * 10));
+        Time elapsed0;
+        elapsed_centis = Time::timediff_centis(start, elapsed0);
 
         if (cfg_analyze_interval_centis &&
             elapsed_centis - last_output > cfg_analyze_interval_centis) {
@@ -827,7 +836,7 @@ int UCTSearch::think(int color, passflag_t passflag) {
         // check if we should still search
         if (elapsed_centis - last_update > 250) {
             last_update = elapsed_centis;
-            dump_analysis(static_cast<int>(m_playouts));
+            dump_analysis(m_playouts.load());
         }
         keeprunning  = is_running();
         keeprunning &= !stop_thinking(elapsed_centis, time_for_move);
@@ -836,10 +845,12 @@ int UCTSearch::think(int color, passflag_t passflag) {
 
     // stop the search
     m_run = false;
+    m_network.notify();
     tg.wait_all();
 
-    lk.lock();
-    m_cv.wait(lk, [this] { return backup_queue.empty(); });
+    //lk.lock();
+    //m_cv.wait(lk, [this] { return backup_queue.empty(); });
+    backup_queue = {};
 
     // reactivate all pruned root children
     for (const auto& node : m_root->get_children()) {
@@ -886,15 +897,17 @@ void UCTSearch::ponder() {
     m_network.set_search(this);
     update_root();
 
-    if (m_root->expandable()) { play_simulation(std::make_unique<GameState>(m_rootstate), m_root.get(), 0); }
-    std::unique_lock<std::mutex> lk(m_mutex);
-    m_cv.wait(lk, [this] { return backup_queue.empty(); });
-    lk.unlock();
-
+    m_run = true;
+    if (m_root->expandable()) { 
+        play_simulation(std::make_unique<GameState>(m_rootstate), m_root.get(), 0); 
+        std::unique_lock<std::mutex> lk(m_mutex);
+        m_cv.wait(lk, [&lk, this] { return backup_queue.empty() || backup_queue.front()->netresult->ready; });
+        lk.unlock();
+        backup();
+    }
     m_root->prepare_root_node(m_network, m_rootstate.board.get_to_move(),
                               m_nodes, m_rootstate);
 
-    m_run = true;
     ThreadGroup tg(thread_pool);
     for (int i = 1; i < cfg_num_threads; i++) {
         tg.add_task(UCTWorker(m_rootstate, this, m_root.get(), i));
@@ -918,10 +931,12 @@ void UCTSearch::ponder() {
 
     // stop the search
     m_run = false;
+    m_network.notify();
     tg.wait_all();
 
-    lk.lock();
-    m_cv.wait(lk, [this] { return backup_queue.empty(); });
+    //lk.lock();
+    //m_cv.wait(lk, [this] { return backup_queue.empty(); });
+    backup_queue = {};
 
     // display search info
     myprintf("\n");

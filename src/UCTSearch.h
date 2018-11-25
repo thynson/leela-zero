@@ -67,10 +67,10 @@ public:
 
     /*
         Default memory limit in bytes.
-        ~1.3GiB on 32-bits and about 5.2GiB on 64-bits.
+        ~1.6GiB on 32-bits and about 5.2GiB on 64-bits.
     */
     static constexpr size_t DEFAULT_MAX_MEMORY =
-        (sizeof(void*) == 4 ? 1'325'000'000 : 5'200'000'000);
+        (sizeof(void*) == 4 ? 1'600'000'000 : 5'200'000'000);
 
     /*
         Minimum allowed size for maximum tree size.
@@ -95,6 +95,8 @@ public:
     void play_simulation(std::unique_ptr<GameState> currstate, UCTNode* node, int thread_num);
     void backup();
     int m_positions{0};
+    std::atomic<bool> m_run{false};
+    std::condition_variable m_cv;
 
 private:
     float get_min_psa_ratio() const;
@@ -118,7 +120,6 @@ private:
     std::unique_ptr<UCTNode> m_root;
     std::atomic<int> m_nodes{0};
     std::atomic<int> m_playouts{0};
-    std::atomic<bool> m_run{false};
     int m_maxplayouts;
     int m_maxvisits;
 
@@ -127,7 +128,6 @@ private:
     Network & m_network;
 
     std::mutex m_mutex;
-    std::condition_variable m_cv;
     std::queue<std::unique_ptr<BackupData>> backup_queue;
     size_t max_queue_length;
     void backup(BackupData& bd);

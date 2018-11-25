@@ -40,6 +40,9 @@
 
 const auto TUNER_FILE_LOCAL = std::string("leelaz_opencl_tuning");
 
+template <typename net_t>
+std::vector<std::string> Tuner<net_t>::tuned_devices;
+
 #ifndef USE_BLAS
 // Eigen helpers
 template <typename T>
@@ -149,6 +152,54 @@ bool Tuner<net_t>::valid_config_sgemm(Parameters p, bool exhaustive) {
         if (p["SA"] != p["SB"]) {
             return false;
         }
+    
+        // if we use a normal run, we will only test SA == 1 && SB == 1
+        // on a tensorcore, we will only test SA == 0 && SB == 0
+        if (p["TCE"] == 1) {
+            if (p["SA"] == 1) {
+                return false;
+            }
+        } else {
+            if (p["SA"] == 0) {
+                return false;
+            }
+        }
+    }
+    if (p["TCE"] == 1) {
+        if (!m_use_tensorcore) {
+            return false;
+        }
+        if (!IsMultiple(p["KWG"], 16)) {
+            return false; 
+        }
+        if (!IsMultiple(p["MWG"], 16)) {
+            return false; 
+        }
+        if (!IsMultiple(p["NWG"], 16)) {
+            return false; 
+        }
+        if (!IsMultiple(p["MDIMC"], 16)) {
+            return false; 
+        }
+        if (!IsMultiple(p["NDIMC"], 16)) {
+            return false; 
+        }
+        if (p["STRM"] != 0) {
+            return false;
+        }
+        if (p["STRN"] != 0) {
+            return false;
+        }
+        if (p["KWI"] != 2) {
+            return false;
+        }
+        if (p["MDIMA"] != 16) {
+            return false;
+        }
+        if (p["NDIMB"] != 16) {
+            return false;
+        }
+
     }
     return true;
 }
@@ -265,6 +316,7 @@ std::string Tuner<net_t>::tune_sgemm(const int m, const int n, const int k,
             {"STRN", {0, 1}},
             {"SA", {0, 1}},
             {"SB", {0, 1}},
+            {"TCE", {0, 1}},
         };
     } else {
         opts = {
@@ -280,8 +332,9 @@ std::string Tuner<net_t>::tune_sgemm(const int m, const int n, const int k,
             {"VWN", {2, 4}},
             {"STRM", {0}},
             {"STRN", {0}},
-            {"SA", {1}},
-            {"SB", {1}},
+            {"SA", {0, 1}},
+            {"SB", {0, 1}},
+            {"TCE", {0, 1}},
         };
     }
 
@@ -412,6 +465,13 @@ std::string Tuner<net_t>::tune_sgemm(const int m, const int n, const int k,
         cl::NDRange size_sgemm = {(m_ceil * p["MDIMC"]) / p["MWG"],
                                   (n_ceil * p["NDIMC"]) / p["NWG"],
                                   size_t(batch_size)};
+        // tensorcore implementation uses a different dimension
+        if (p["TCE"]) {
+            local_sgemm = {32 * p["MDIMC"]/16, p["NDIMC"]/16, 1};
+            size_sgemm = {32 * m_ceil / 16 * p["MDIMC"] / p["MWG"],
+                          n_ceil / 16 * p["NDIMC"] / p["NWG"],
+                          size_t(batch_size)};
+        }
 
         auto sum = 0.0f;
         auto error = 0.0f;
@@ -454,30 +514,30 @@ std::string Tuner<net_t>::tune_sgemm(const int m, const int n, const int k,
             failed_error++;
         }
 
-        if (error < getTunerMaxError<net_t>() && (best_time == 0 || sum < best_time)) {
-            auto param_str = parameters_to_string(p);
-            auto kernel_ms = 1e-6f * (sum / runs);
-            // Timing is in nanoseconds (10^-9), Giga = 10^9, so this works out
-            auto kernel_gflops = total_flops / (sum / runs);
-            myprintf("(%u/%u) %s %.4f ms (%.1f GFLOPS)\n",
+        auto param_str = parameters_to_string(p);
+        auto kernel_ms = 1e-6f * (sum / runs);
+        // Timing is in nanoseconds (10^-9), Giga = 10^9, so this works out
+        auto kernel_gflops = total_flops / (sum / runs);
+            myprintf("(%u/%u) %s %.4f ms (%.1f GFLOPS) Error: %f\n",
                param_counter, valid_params.size(), param_str.c_str(),
-               kernel_ms, kernel_gflops);
+               kernel_ms, kernel_gflops, error);
+        if (error < getTunerMaxError<net_t>() && (best_time == 0 || sum < best_time)) {
             best_time = sum;
             best_params = defines;
         }
     }
     if (best_time == 0) {
         if (failed_compile > 0) {
-            printf("Failed to compile: %d kernels.\n", failed_compile);
+            myprintf_error("Failed to compile: %d kernels.\n", failed_compile);
         }
         if (failed_enqueue > 0) {
-            printf("Failed to enqueue: %d kernels\n", failed_enqueue);
+            myprintf_error("Failed to enqueue: %d kernels\n", failed_enqueue);
         }
         if (failed_error > 0) {
-            printf("Too high error: %d kernels\n", failed_error);
+            myprintf_error("Too high error: %d kernels\n", failed_error);
         }
-        printf("Failed to find a working configuration.\nCheck your OpenCL drivers.\n");
-        printf("Minimum error: %f. Error bound: %f\n", min_error, getTunerMaxError<net_t>());
+        myprintf_error("Failed to find a working configuration.\nCheck your OpenCL drivers.\n");
+        myprintf_error("Minimum error: %f. Error bound: %f\n", min_error, getTunerMaxError<net_t>());
         throw std::runtime_error("Tuner failed to find working configuration.");
     }
     return best_params;
@@ -579,7 +639,24 @@ std::string Tuner<net_t>::load_sgemm_tuners(const int m, const int n, const int 
                                      const int batch_size) {
     auto tuner_file = leelaz_file(TUNER_FILE_LOCAL);
     auto file = std::ifstream{tuner_file};
-    if (!cfg_sgemm_exhaustive && file.good()) {
+
+    auto try_prior_tuning = file.good();
+
+    // If we want full tuning, don't reuse previously tuned results
+    // except if the tuning was created from this run from a different
+    // GPU instance with the same name.  This prevents the tuner running
+    // for multiple times if the system has multiple same GPUs.
+    if (try_prior_tuning && cfg_sgemm_exhaustive) {
+        auto dev = m_opencl.get_device_name();
+        try_prior_tuning = std::any_of(
+            begin(tuned_devices),
+            end(tuned_devices),
+            [&dev](const std::string & x) { return dev == x; }
+        );
+    }
+    tuned_devices.emplace_back(m_opencl.get_device_name());
+
+    if (try_prior_tuning) {
         auto line = std::string{};
         while (std::getline(file, line)) {
             auto tuners = sgemm_tuners_from_line(line, m, n, k, batch_size);
@@ -592,6 +669,14 @@ std::string Tuner<net_t>::load_sgemm_tuners(const int m, const int n, const int 
     auto tuners = tune_sgemm(m, n, k, batch_size);
     store_sgemm_tuners(m, n, k, batch_size, tuners);
     return tuners;
+}
+
+template <typename net_t>
+void Tuner<net_t>::enable_tensorcore() {}
+
+template <>
+void Tuner<half_float::half>::enable_tensorcore() {
+    m_use_tensorcore = true;
 }
 
 template class Tuner<float>;
