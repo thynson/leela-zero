@@ -219,11 +219,11 @@ void UCTSearch::backup() {
     if (!m_run) { return; }
     std::unique_lock<std::mutex> lk(m_mutex);
     while (!backup_queue.empty() &&
-           (!backup_queue.front()->multiplicity || backup_queue.front()->netresult->ready.load())) {
+           (!backup_queue.front()->netresult || backup_queue.front()->netresult->ready.load())) {
         auto bd = std::move(backup_queue.front());
         backup_queue.pop();
         lk.unlock();
-        if (bd->multiplicity) {
+        if (bd->netresult) {
             auto node = bd->path.back().node;
             auto had_children = node->has_children();
             node->create_children(bd->netresult->result, bd->symmetry, m_nodes, *bd->state,
@@ -252,7 +252,7 @@ void UCTSearch::backup() {
 void UCTSearch::failed_simulation(BackupData& bd) {
     auto path = bd.path;
     for (auto nf = path.rbegin(); nf != path.rend(); ++nf) {
-        nf->node->virtual_loss_undo();
+        nf->node->virtual_loss_undo(bd.multiplicity);
     }
 }
 
@@ -285,9 +285,11 @@ void UCTSearch::play_simulation(std::unique_ptr<GameState> currstate,
         if (node->expandable(min_psa_ratio)) {
             if (!node->acquire_expanding()) {
                 m_failed_simulations++;
-                bd->multiplicity = 0;
                 std::unique_lock<std::mutex> lk(m_mutex);
-                backup_queue.push(std::move(bd));
+                if (!backup_queue.empty() && node == backup_queue.back()->path.back().node) { 
+                    backup_queue.back()->multiplicity++; 
+                }
+                else { backup_queue.push(std::move(bd)); }
                 return;
             }
 
