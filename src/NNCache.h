@@ -59,6 +59,7 @@ public:
 
     // Resize NNCache
     void resize(int size);
+    void clear();
 
     // Return the hit rate ratio.
     std::pair<int, int> hit_rate() const {
