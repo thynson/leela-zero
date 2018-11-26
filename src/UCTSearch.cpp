@@ -217,7 +217,8 @@ void UCTSearch::backup(BackupData& bd) {
 
 void UCTSearch::backup() {
     std::unique_lock<std::mutex> lk(m_mutex);
-    while (m_run && !backup_queue.empty() && backup_queue.front()->netresult->ready.load()) {
+    while (m_run && !backup_queue.empty() &&
+           (!backup_queue.front()->multiplicity || backup_queue.front()->netresult->ready.load())) {
         auto bd = std::move(backup_queue.front());
         backup_queue.pop();
         lk.unlock();
