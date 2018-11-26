@@ -216,8 +216,9 @@ void UCTSearch::backup(BackupData& bd) {
 }
 
 void UCTSearch::backup() {
+    if (!m_run) { return; }
     std::unique_lock<std::mutex> lk(m_mutex);
-    while (m_run && !backup_queue.empty() &&
+    while (!backup_queue.empty() &&
            (!backup_queue.front()->multiplicity || backup_queue.front()->netresult->ready.load())) {
         auto bd = std::move(backup_queue.front());
         backup_queue.pop();
@@ -241,7 +242,8 @@ void UCTSearch::backup() {
         else {
             failed_simulation(*bd);
         }
-        lk.lock();
+        if (m_run) { lk.lock(); }
+        else { return; }
     }
     lk.unlock();
     m_cv.notify_all();
@@ -801,9 +803,7 @@ int UCTSearch::think(int color, passflag_t passflag) {
     if (m_root->expandable()) {
         play_simulation(std::make_unique<GameState>(m_rootstate), m_root.get(), 0);
         std::unique_lock<std::mutex> lk(m_mutex);
-        m_cv.wait(lk, [&lk, this] { return backup_queue.empty() || backup_queue.front()->netresult->ready; });
-        lk.unlock();
-        backup();
+        m_cv.wait(lk, [this] { return backup_queue.empty(); });
     }
     m_root->prepare_root_node(m_network, color, m_nodes, m_rootstate);
 
@@ -817,8 +817,6 @@ int UCTSearch::think(int color, passflag_t passflag) {
     auto last_update = 0;
     auto last_output = 0;
     do {
-        //play_simulation(std::make_unique<GameState>(m_rootstate), m_root.get(), 0);
-
         Time elapsed;
         int elapsed_centis = Time::timediff_centis(start, elapsed);
         std::this_thread::sleep_for(std::chrono::milliseconds(
@@ -847,10 +845,9 @@ int UCTSearch::think(int color, passflag_t passflag) {
     // stop the search
     m_run = false;
     m_network.notify();
+    // below can move to update_root()
     tg.wait_all();
-
-    //lk.lock();
-    //m_cv.wait(lk, [this] { return backup_queue.empty(); });
+    std::unique_lock<std::mutex> lk(m_mutex);
     backup_queue = {};
 
     // reactivate all pruned root children
@@ -902,9 +899,7 @@ void UCTSearch::ponder() {
     if (m_root->expandable()) { 
         play_simulation(std::make_unique<GameState>(m_rootstate), m_root.get(), 0); 
         std::unique_lock<std::mutex> lk(m_mutex);
-        m_cv.wait(lk, [&lk, this] { return backup_queue.empty() || backup_queue.front()->netresult->ready; });
-        lk.unlock();
-        backup();
+        m_cv.wait(lk, [&lk, this] { return backup_queue.empty(); });
     }
     m_root->prepare_root_node(m_network, m_rootstate.board.get_to_move(),
                               m_nodes, m_rootstate);
@@ -934,9 +929,7 @@ void UCTSearch::ponder() {
     m_run = false;
     m_network.notify();
     tg.wait_all();
-
-    //lk.lock();
-    //m_cv.wait(lk, [this] { return backup_queue.empty(); });
+    std::unique_lock<std::mutex> lk(m_mutex);
     backup_queue = {};
 
     // display search info
