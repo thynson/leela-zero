@@ -130,7 +130,7 @@ void GTP::setup_default_parameters() {
     cfg_batch_size = 5;
     cfg_frac_backup = false;
 #ifdef USE_HALF
-    cfg_precision = precision_t::AUTO;
+    cfg_precision = precision_t::HALF;
 #endif
 #endif
     cfg_puct = 0.8f;
