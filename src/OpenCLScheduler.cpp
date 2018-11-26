@@ -413,8 +413,8 @@ void OpenCLScheduler<net_t>::batch_worker(const size_t gnum, const size_t i) {
         m_max_queue_size += cfg_batch_size;
         //myprintf("max queue size: %d - worker %d\n", m_max_queue_size.load(), i);
         m_cv0.notify_all();
-        m_search->m_cv.notify_one();
-        //m_search->backup();
+        m_search->backup();
+        //m_search->m_cv.notify_all();
     }
 }
 
