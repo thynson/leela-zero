@@ -272,7 +272,7 @@ float factor(float q_c, float p_c, double v_c, float q_a, float p_a, double v_a,
 }
 
 std::pair<UCTNode*, float> UCTNode::uct_select_child(int color, bool is_root) {
-    wait_expanded();
+    if (m_expand_state == ExpandState::EXPANDING) { return std::make_pair(nullptr, 1.0f); }
 
     // Count parentvisits manually to avoid issues with transpositions.
     auto total_visited_policy = 0.0f;
@@ -400,8 +400,9 @@ void UCTNode::sort_children(int color) {
     std::stable_sort(rbegin(m_children), rend(m_children), NodeComp(color));
 }
 
-UCTNode& UCTNode::get_best_root_child(int color) {
-    wait_expanded();
+UCTNode& UCTNode::get_best_root_child(int color, bool running) {
+    if (running) { wait_expanded(); } else
+    if (m_expand_state == ExpandState::EXPANDING) { expand_cancel(); }
 
     assert(!m_children.empty());
 

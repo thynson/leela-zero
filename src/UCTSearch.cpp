@@ -313,7 +313,7 @@ void UCTSearch::play_simulation(std::unique_ptr<GameState> currstate,
         // select a child
         auto child_stats = node->uct_select_child(color, node == m_root.get());
         node = child_stats.first;
-        if (node == nullptr) { failed_simulation(*bd); return; }
+        if (node == nullptr) { failed_simulation(*bd); m_failed_simulations++; return; }
         factor = child_stats.second;
         auto move = node->get_move();
         currstate->play_move(move);
@@ -631,7 +631,7 @@ std::string UCTSearch::get_pv(FastState & state, UCTNode& parent) {
         return std::string();
     }
 
-    auto& best_child = parent.get_best_root_child(state.get_to_move());
+    auto& best_child = parent.get_best_root_child(state.get_to_move(), m_run);
     if (best_child.first_visit()) {
         return std::string();
     }
