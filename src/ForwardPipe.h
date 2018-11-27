@@ -64,6 +64,7 @@ public:
                               std::shared_ptr<const ForwardPipeWeights> weights) = 0;
     UCTSearch* m_search;
     Network* m_network;
+    std::mutex m_mutex;
     std::condition_variable m_cv0;
 };
 

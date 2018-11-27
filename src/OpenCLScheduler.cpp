@@ -298,7 +298,7 @@ void OpenCLScheduler<net_t>::forward0(std::unique_ptr<const std::vector<float>> 
     m_forward_queue0.push_back(std::make_unique<ForwardQueueEntry0>(
         std::move(input), tomove, symmetry, result));
     m_cv.notify_one();
-    if ((int)m_forward_queue0.size() >= m_max_queue_size.load()) {
+    if (m_search->m_run && (int)m_forward_queue0.size() >= m_max_queue_size.load()) {
         m_cv0.wait(lk, [&] { return (int)m_forward_queue0.size() < m_max_queue_size.load()
             || !m_search->m_run; });
         lk.unlock();

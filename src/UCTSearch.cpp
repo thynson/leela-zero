@@ -836,7 +836,9 @@ int UCTSearch::think(int color, passflag_t passflag) {
 
     // stop the search
     m_run = false;
+    std::unique_lock<std::mutex> lk0(m_network.get_queue_mutex());
     m_network.notify();
+    lk0.unlock();
     // below can move to update_root()
     tg.wait_all();
     std::unique_lock<std::mutex> lk(m_mutex);
@@ -919,7 +921,9 @@ void UCTSearch::ponder() {
 
     // stop the search
     m_run = false;
+    std::unique_lock<std::mutex> lk0(m_network.get_queue_mutex());
     m_network.notify();
+    lk0.unlock();
     tg.wait_all();
     std::unique_lock<std::mutex> lk(m_mutex);
     backup_queue = {};

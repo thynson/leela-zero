@@ -84,7 +84,7 @@ private:
     std::vector<std::unique_ptr<OpenCL_Network<net_t>>> m_networks;
     std::vector<std::unique_ptr<OpenCL<net_t>>> m_opencl;
 
-    std::mutex m_mutex;
+    //std::mutex m_mutex;
     std::condition_variable m_cv;
     //std::condition_variable m_cv0;
 
