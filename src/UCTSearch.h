@@ -93,7 +93,7 @@ public:
     void increment_playouts();
     void play_simulation(std::unique_ptr<GameState> currstate, UCTNode* node, int thread_num);
     void backup();
-    int m_positions{0};
+    std::atomic<int> m_positions{0};
     std::atomic<bool> m_run{false};
     std::condition_variable m_cv;
 
