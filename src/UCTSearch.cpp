@@ -206,11 +206,11 @@ void UCTSearch::backup(BackupData& bd) {
     auto path = bd.path;
     auto eval = bd.eval;
     auto factor = 1.0f;
-    auto first = true;
+    auto leaf = true;
     for (auto nf = path.rbegin(); nf != path.rend(); ++nf) {
         auto sel_factor = factor * nf->factor;
         nf->node->update(eval, factor, sel_factor);
-        if (first) { nf->node->expand_done(); first = false; }
+        if (leaf) { nf->node->expand_done(); leaf = false; }
         factor = sel_factor;
     }
     m_playouts++;
