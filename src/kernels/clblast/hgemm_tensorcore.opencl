@@ -1,7 +1,29 @@
+/*
+    This file is part of Leela Zero.
+    Copyright (C) 2017-2018 Junhee Yoo and contributors
+
+    Leela Zero is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    Leela Zero is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with Leela Zero.  If not, see <http://www.gnu.org/licenses/>.
+*/
+
+
+// This is the tensor core implementation of XgemmBatched.  Can only be used on
+// GPUs with NVIDIA's Volta / Turing architectures with wmmv instructions.
+
 // Enables loading of this file using the C++ pre-processor's #include (C++11 standard raw string
 // literal). Comment-out this line for syntax-highlighting when developing.
-R"(
 
+R"(
 #define USE_TC
 
 #ifndef SA
@@ -54,12 +76,26 @@ R"(
 #define vloadN vload16
 #endif
 
+#define WARP_SIZE 32
+
+#if MDIMA == 32 && NDIMB == 8
+#define WMMA_SHAPE "m32n8k16"
+#elif MDIMA == 16 && NDIMB == 16
+#define WMMA_SHAPE "m16n16k16"
+#elif MDIMA == 8 && NDIMB == 32
+#define WMMA_SHAPE "m8n32k16"
+#else
+#error Unsupported MDIMA / NDIMB combination
+#endif
+
+
 void GlobalToLocalA(int tid, int stride, __local short * alm, __global short * agm)
 {
     const int copy_size = KWG * MWG;
     const int dest_stride = MWG;
-    const int num_threads = MDIMC * NDIMC * 32 / 256;
+    const int num_threads = MDIMC * NDIMC * WARP_SIZE / (MDIMA * NDIMB);
 
+#pragma unroll
     for(int i=tid * VWM; i < copy_size; i += num_threads * VWM) {
         int x = i % dest_stride;
         int y = i / dest_stride;
@@ -73,8 +109,9 @@ void GlobalToLocalB(int tid, int stride, __local short * blm, __global short * b
 {
     const int copy_size = KWG * NWG;
     const int dest_stride = NWG;
-    const int num_threads = MDIMC * NDIMC * 32 / 256;
-    for(int i=tid; i < copy_size; i += num_threads) {
+    const int num_threads = MDIMC * NDIMC * WARP_SIZE / (MDIMA * NDIMB);
+#pragma unroll
+    for(int i=tid * VWN; i < copy_size; i += num_threads * VWN) {
         int x = i % dest_stride;
         int y = i / dest_stride;
         vstoreN( vloadN((y * stride + x) / VWN, bgm), i / VWN, blm);
@@ -96,21 +133,22 @@ void HgemmBody(const int kSizeM, const int kSizeN, const int kSizeK,
     int laneid;
     asm("mov.u32 %0, %%laneid;" : "=r"(laneid));
 
-    // the base location of the 16x16 tile number this thread is responsible of
-    int tile_m = get_global_id(0) / 32 * MWG / MDIMC;
+    // the base location of the MDIMA * NDIMB tile number this thread is responsible of
+    int tile_m = get_global_id(0) / WARP_SIZE * MWG / MDIMC;
     int tile_n = get_global_id(1) * NWG / NDIMC;
 
     // the base pointers of agm, bgm and cgm
-    const __global half * agm_ = agm + 16 * tile_m;
-    const __global half * bgm_ = bgm + 16 * tile_n;
-    __global half * cgm_ = cgm + kSizeM * 16 * tile_n + 16 * tile_m;
+    const __global half * agm_ = agm + MDIMA * tile_m;
+    const __global half * bgm_ = bgm + NDIMB * tile_n;
+    __global half * cgm_ = cgm + kSizeM * NDIMB * tile_n + MDIMA * tile_m;
 
     // the (m,n) position within the warp
     int offset_number = laneid;
-    int offset_m = offset_number % 8;
-    int offset_n = offset_number / 8;
+    int offset_m = offset_number % (MDIMA/2);
+    int offset_n = offset_number / (MDIMA/2);
     
-    if(laneid != get_global_id(0) % 32) {
+    if(laneid != get_global_id(0) % WARP_SIZE) {
+        // this is just to make sure we crash ourselves if the basic assumption doesn't hold
         return;
     }
 
@@ -158,14 +196,14 @@ void HgemmBody(const int kSizeM, const int kSizeN, const int kSizeK,
 #endif
     for(kwg = 0; kwg < kSizeK; kwg += KWG) {
 #if SA == 1
-        GlobalToLocalA(get_local_id(0) +  get_local_id(1) * 32 * MDIMC / 16, kSizeM,
+        GlobalToLocalA(get_local_id(0) + get_local_id(1) * WARP_SIZE * MDIMC / MDIMA, kSizeM,
             alm, 
             (__global short *)(agm + get_group_id(0) * MWG + kwg * kSizeM)
         ); 
 #endif
 
 #if SB == 1
-        GlobalToLocalB(get_local_id(0) +  get_local_id(1) * 32 * MDIMC, kSizeN,
+        GlobalToLocalB(get_local_id(0) +  get_local_id(1) * WARP_SIZE * MDIMC / MDIMA, kSizeN,
             blm, 
             (__global short *)(bgm + get_group_id(1) * NWG + kwg * kSizeN)
         ); 
@@ -183,24 +221,24 @@ void HgemmBody(const int kSizeM, const int kSizeN, const int kSizeK,
 #pragma unroll
                 for(nb = 0; nb < NWG / NDIMC; nb += 1) {
 #if SA == 1
-                    const int block_loc_m = (get_local_id(0)/32) % (MDIMC/16);
+                    const int block_loc_m = (get_local_id(0)/WARP_SIZE) % (MDIMC/MDIMA);
                     const int agm_stride = MWG;
-                    const __local half * b_agm_ = (const __local half *)(alm + (mb + block_loc_m * (MWG/MDIMC)) * 16);
+                    const __local half * b_agm_ = (const __local half *)(alm + (mb + block_loc_m * (MWG/MDIMC)) * MDIMA);
                     const __local half * bb_agm_ = b_agm_ + agm_stride * kb;
 #else
                     const int agm_stride = kSizeM;
-                    const __global half * b_agm_ = agm_ + mb * 16;
+                    const __global half * b_agm_ = agm_ + mb * MDIMA;
                     const __global half * bb_agm_ = b_agm_ + kSizeM * (kb + kwg);
 #endif
 
 #if SB == 1
-                    const int block_loc_n = (get_local_id(1)) % (NDIMC/16);
+                    const int block_loc_n = (get_local_id(1)) % (NDIMC/NDIMB);
                     const int bgm_stride = NWG;
-                    const __local half * b_bgm_ = (const __local half *)(blm + (nb + block_loc_n * (NWG/NDIMC)) * 16);
+                    const __local half * b_bgm_ = (const __local half *)(blm + (nb + block_loc_n * (NWG/NDIMC)) * NDIMB);
                     const __local half * bb_bgm_ = b_bgm_ + bgm_stride * kb;
 #else
                     const int bgm_stride = kSizeN;
-                    const __global half * b_bgm_ = bgm_ + nb * 16;
+                    const __global half * b_bgm_ = bgm_ + nb * NDIMB;
                     const __global half * bb_bgm_ = b_bgm_ + kSizeN * (kb + kwg);
 #endif
 #ifdef USE_TC
@@ -213,16 +251,16 @@ void HgemmBody(const int kSizeM, const int kSizeN, const int kSizeK,
                         ".reg .b32 a0, a1, a2, a3, a4, a5, a6, a7;\n"
                         ".reg .b32 b0, b1, b2, b3, b4, b5, b6, b7;\n"
 #if SA == 1
-                        "wmma.load.a.sync.aligned.m16n16k16.shared.col.f16 {a0,a1,a2,a3,a4,a5,a6,a7}, [%4], %6;\n"
+                        "wmma.load.a.sync.aligned." WMMA_SHAPE ".shared.col.f16 {a0,a1,a2,a3,a4,a5,a6,a7}, [%4], %6;\n"
 #else
-                        "wmma.load.a.sync.aligned.m16n16k16.global.col.f16 {a0,a1,a2,a3,a4,a5,a6,a7}, [%4], %6;\n"
+                        "wmma.load.a.sync.aligned." WMMA_SHAPE ".col.f16 {a0,a1,a2,a3,a4,a5,a6,a7}, [%4], %6;\n"
 #endif
 #if SB == 1
-                        "wmma.load.b.sync.aligned.m16n16k16.shared.row.f16 {b0,b1,b2,b3,b4,b5,b6,b7}, [%5], %7;\n"
+                        "wmma.load.b.sync.aligned." WMMA_SHAPE ".shared.row.f16 {b0,b1,b2,b3,b4,b5,b6,b7}, [%5], %7;\n"
 #else
-                        "wmma.load.b.sync.aligned.m16n16k16.global.row.f16 {b0,b1,b2,b3,b4,b5,b6,b7}, [%5], %7;\n"
+                        "wmma.load.b.sync.aligned." WMMA_SHAPE ".row.f16 {b0,b1,b2,b3,b4,b5,b6,b7}, [%5], %7;\n"
 #endif
-                        "wmma.mma.sync.aligned.col.row.m16n16k16.f16.f16.satfinite "
+                        "wmma.mma.sync.aligned.col.row." WMMA_SHAPE ".f16.f16 "
                         "    {%0,%1,%2,%3},\n"
                         "    {a0,a1,a2,a3,a4,a5,a6,a7},\n"
                         "    {b0,b1,b2,b3,b4,b5,b6,b7},\n"
@@ -233,13 +271,13 @@ void HgemmBody(const int kSizeM, const int kSizeN, const int kSizeK,
                     c2[mb][nb] = d2_;
                     c3[mb][nb] = d3_;
 #else
-                    for(m = offset_m; m < 16; m += 8) {
-                        for(n = offset_n; n < 16; n += 4) {
+                    for(m = offset_m; m < MDIMA; m += MDIMA/2) {
+                        for(n = offset_n; n < NDIMB; n += NDIMB/4) {
                             float a = 0.0f;
                             for(k = 0; k < 16; k++) {
                                 a += vload_half(agm_stride * k + m, bb_agm_) * vload_half(bgm_stride * k + n, bb_bgm_);
                             }
-                            acc[mb][nb][m/8][n/4] += a;
+                            acc[mb][nb][m/(MDIMA/2)][n/(NDIMB/4)] += a;
                         }
                     }
 #endif
@@ -257,18 +295,18 @@ void HgemmBody(const int kSizeM, const int kSizeN, const int kSizeK,
             int c1_ = c1[mb][nb];
             int c2_ = c2[mb][nb];
             int c3_ = c3[mb][nb];
-            __global half * b_cgm_ = cgm_ + kSizeM * nb * 16 + mb * 16;
+            __global half * b_cgm_ = cgm_ + kSizeM * nb * NDIMB + mb * MDIMA;
             asm("{\n"
-                "wmma.store.d.sync.aligned.global.col.m16n16k16.f16 [%4], {%0,%1,%2,%3}, %5;"
+                "wmma.store.d.sync.aligned.col." WMMA_SHAPE ".f16 [%4], {%0,%1,%2,%3}, %5;"
                 "}" : : "r"(c0_), "r"(c1_), "r"(c2_), "r"(c3_), "l"(b_cgm_), "r"(kSizeM));
         }
     }
 #else
     for(mb = 0; mb < MWG / MDIMC; mb += 1) {
         for(nb = 0; nb < NWG / NDIMC; nb += 1) {
-            for(m = offset_m; m < 16; m += 8) {
-                for(n = offset_n; n < 16; n += 4) {
-                    vstore_half(acc[mb][nb][m/8][n/4], kSizeM * (nb * 16 + n) + mb * 16 + m, cgm_);
+            for(m = offset_m; m < MDIMA; m += MDIMA/2) {
+                for(n = offset_n; n < NDIMB; n += NDIMB/4) {
+                    vstore_half(acc[mb][nb][m/(MDIMA/2)][n/(NDIMB/4)], kSizeM * (nb * NDIMB + n) + mb * MDIMA + m, cgm_);
                 }
             }
         }
@@ -279,7 +317,7 @@ void HgemmBody(const int kSizeM, const int kSizeN, const int kSizeK,
 struct alm_t {short alm[KWG * MWG];} __attribute__((aligned(32)));
 struct blm_t {short blm[KWG * NWG];} __attribute__((aligned(32)));
 
-__kernel __attribute__((reqd_work_group_size(32*MDIMC/16, NDIMC/16, 1)))
+__kernel __attribute__((reqd_work_group_size(32*MDIMC/MDIMA, NDIMC/NDIMB, 1)))
 void XgemmBatched(const int kSizeM, const int kSizeN, const int kSizeK,
                   const __global half* restrict agm,
                   const __global half* restrict bgm,
@@ -318,5 +356,4 @@ void XgemmBatched(const int kSizeM, const int kSizeN, const int kSizeK,
 
 // End of the C++11 raw string literal
 )"
-
 // =================================================================================================
