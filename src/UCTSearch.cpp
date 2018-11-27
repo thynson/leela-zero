@@ -205,11 +205,11 @@ float UCTSearch::get_min_psa_ratio() const {
 void UCTSearch::backup(BackupData& bd) {
     auto path = bd.path;
     auto factor = 1.0f;
-    auto first = true;
+    auto leaf = true;
     for (auto nf = path.rbegin(); nf != path.rend(); ++nf) {
         auto sel_factor = factor * nf->factor;
         nf->node->update(bd.eval, bd.multiplicity, factor, sel_factor);
-        if (first) { nf->node->expand_done(); first = false; }
+        if (leaf) { nf->node->expand_done(); leaf = false; }
         factor = sel_factor;
     }
     m_playouts++;
