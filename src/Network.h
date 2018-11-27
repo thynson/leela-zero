@@ -100,6 +100,7 @@ public:
     void nncache_clear();
 
     void set_search(UCTSearch* search) { m_forward->m_search = search; m_forward->m_network = this; }
+    std::mutex& get_queue_mutex() { return m_forward->m_mutex; }
     void notify() { m_forward->m_cv0.notify_all(); }
     void process_output(std::vector<float>& policy_data,
         std::vector<float>& value_data,
