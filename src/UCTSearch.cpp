@@ -226,9 +226,8 @@ void UCTSearch::backup() {
         if (bd->netresult) {
             auto node = bd->path.back().node;
             auto had_children = node->has_children();
-            node->create_children(bd->netresult->result, bd->symmetry, m_nodes, *bd->state,
-                bd->path.size() == 1 ? 0.0 // root
-                : get_min_psa_ratio());
+            auto min_psa_ratio = bd->path.size() == 1 ? 0.0 : get_min_psa_ratio();
+            node->create_children(bd->netresult->result, bd->symmetry, m_nodes, *bd->state, min_psa_ratio);
             if (!had_children) {
                 auto eval = bd->netresult->result.winrate;
                 bd->eval = (bd->state->get_to_move() == FastBoard::BLACK ? eval : 1.0f - eval);
@@ -281,22 +280,12 @@ void UCTSearch::play_simulation(std::unique_ptr<GameState> currstate,
         }
 
         // expand a node
-        const auto min_psa_ratio = is_root ? 0.0 : get_min_psa_ratio();
-        if (node->expandable(min_psa_ratio)) {
-            if (!node->acquire_expanding()) {
-                m_failed_simulations++;
-                std::unique_lock<std::mutex> lk(m_mutex);
-                if (!backup_queue.empty() && node == backup_queue.back()->path.back().node) { 
-                    backup_queue.back()->multiplicity++; 
-                }
-                else { backup_queue.push(std::move(bd)); }
-                return;
-            }
-
+        if (node->expandable() && node->acquire_expanding()) {
             const auto result_sym = m_network.get_output0(
                 &*currstate, Network::Ensemble::RANDOM_SYMMETRY);
             //if (!result_sym.first) { failed_simulation(*bd); myprintf("strange fail!\n"); return; }
             if (result_sym.first->ready.load()) {
+                const auto min_psa_ratio = is_root ? 0.0 : get_min_psa_ratio();
                 auto had_children = node->has_children();
                 node->create_children(result_sym.first->result, result_sym.second, m_nodes, *currstate, min_psa_ratio);
                 if (!had_children) {
@@ -321,15 +310,29 @@ void UCTSearch::play_simulation(std::unique_ptr<GameState> currstate,
         }
 
         // select a child
-        auto child_stats = node->uct_select_child(color, node == m_root.get());
-        node = child_stats.first;
-        if (node == nullptr) { failed_simulation(*bd); m_failed_simulations++; return; }
-        factor = child_stats.second;
-        auto move = node->get_move();
-        currstate->play_move(move);
-        if (move != FastBoard::PASS && currstate->superko()) {
-            node->expand_cancel();
-            node->invalidate();
+        if (node->has_children()) {
+            auto child_factor = node->uct_select_child(color, node == m_root.get());
+            node = child_factor.first;
+            if (node == nullptr) {
+                m_failed_simulations++;
+                std::unique_lock<std::mutex> lk(m_mutex);
+                if (!backup_queue.empty() && node == backup_queue.back()->path.back().node) {
+                    backup_queue.back()->multiplicity++;
+                }
+                else { backup_queue.push(std::move(bd)); }
+                return; 
+            }
+            factor = child_factor.second;
+            auto move = node->get_move();
+            currstate->play_move(move);
+            if (move != FastBoard::PASS && currstate->superko()) {
+                //node->expand_done();
+                node->invalidate();
+                failed_simulation(*bd);
+                return;
+            }
+        }
+        else {
             failed_simulation(*bd);
             return;
         }
