@@ -277,10 +277,13 @@ void UCTSearch::play_simulation(std::unique_ptr<GameState> currstate,
         }
 
         // expand a node
-        const auto min_psa_ratio = is_root ? 0.0 : get_min_psa_ratio();
-        if (node->expandable(min_psa_ratio)) {
+        if (node->expandable()) {
             if ((node->get_visits(WR) > 0.0 || is_root) && !node->acquire_expanding()) {
                 failed_simulation(*bd); m_failed_simulations++; return;
+            }
+            const auto min_psa_ratio = is_root ? 0.0 : get_min_psa_ratio();
+            if (!node->expandable(min_psa_ratio)) {
+                failed_simulation(*bd); node->expand_done(); return;
             }
 
             const auto result_sym = m_network.get_output0(
