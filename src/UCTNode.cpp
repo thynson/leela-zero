@@ -273,7 +273,7 @@ float factor(float q_c, float p_c, double v_c, float q_a, float p_a, double v_a,
 }
 
 std::pair<UCTNode*, float> UCTNode::uct_select_child(int color, bool is_root) {
-    wait_expanded();
+    if (m_expand_state == ExpandState::EXPANDING) { return std::make_pair(nullptr, 1.0f); }
 
     // Count parentvisits manually to avoid issues with transpositions.
     auto total_visited_policy = 0.0f;
@@ -332,13 +332,6 @@ std::pair<UCTNode*, float> UCTNode::uct_select_child(int color, bool is_root) {
         auto actual_puct = cfg_puct * psa * (numerator / actual_denom);
         auto value = winrate + puct;
         auto actual_value = actual_winrate + actual_puct;
-        /*
-        if (child.is_inflated() && child->m_expand_state.load() == ExpandState::EXPANDING) {
-            // Someone else is expanding this node, never select it
-            // if we can avoid so, because we'd block on it.
-            value = -1.0f - cfg_fpu_reduction;
-        }
-        */
         
         if (actual_value > best_actual_value) {
             best_actual_value = actual_value;
@@ -394,8 +387,9 @@ void UCTNode::sort_children(int color) {
     std::stable_sort(rbegin(m_children), rend(m_children), NodeComp(color));
 }
 
-UCTNode& UCTNode::get_best_root_child(int color) {
-    wait_expanded();
+UCTNode& UCTNode::get_best_root_child(int color, bool running) {
+    if (running) { wait_expanded(); } else
+    if (m_expand_state == ExpandState::EXPANDING) { expand_cancel(); }
 
     assert(!m_children.empty());
 
