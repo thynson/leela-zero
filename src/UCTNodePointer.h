@@ -123,7 +123,7 @@ public:
     // proxy of UCTNode methods which can be called without
     // constructing UCTNode
     bool valid() const;
-    double get_visits(visit_type type = WR) const;
+    double get_visits(visit_type type = SEL) const;
     float get_policy() const;
     bool active() const;
     int get_move() const;
