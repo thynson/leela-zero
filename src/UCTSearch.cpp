@@ -875,7 +875,7 @@ int UCTSearch::think(int color, passflag_t passflag) {
 
         m_network.nncache_dump_stats();
         myprintf("failed simulations: %d\n", m_failed_simulations);
-        myprintf("max backup queue size: %d\n", max_queue_length);
+        myprintf("max pending backups: %d\n", max_queue_length);
 #ifdef USE_OPENCL
 #ifndef NDEBUG
         myprintf("batch stats: %d %d\n", batch_stats[0].load(), batch_stats[1].load());
@@ -939,7 +939,7 @@ void UCTSearch::ponder() {
     myprintf("\n%d visits, %d nodes\n\n", m_root->get_visits(), m_nodes.load());
     m_network.nncache_dump_stats();
     myprintf("failed simulations: %d\n", m_failed_simulations);
-    myprintf("max queue size: %d\n", max_queue_length);
+    myprintf("max pending backups: %d\n", max_queue_length);
 
     // Copy the root state. Use to check for tree re-use in future calls.
     m_last_rootstate = std::make_unique<GameState>(m_rootstate);
