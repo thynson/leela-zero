@@ -328,9 +328,10 @@ std::pair<UCTNode*, float> UCTNode::uct_select_child(int color, bool is_root) {
             has_visits = true;
         }
         auto psa = child.get_policy();
+        auto visits = child.get_visits();
         total_visited_policy += psa;
         auto denom = 1.0 + child.get_visits(VL);
-        auto actual_denom = 1.0 + child.get_visits();
+        auto actual_denom = 1.0 + visits;
         auto puct = cfg_puct * psa * (numerator / denom);
         auto actual_puct = cfg_puct * psa * (numerator / actual_denom);
         auto value = winrate + puct;
@@ -340,7 +341,7 @@ std::pair<UCTNode*, float> UCTNode::uct_select_child(int color, bool is_root) {
             best_actual_value = actual_value;
             q_of_actual_best = actual_winrate;
             policy_of_actual_best = psa;
-            visits_of_actual_best = child.get_visits();
+            visits_of_actual_best = visits;
             actual_best = &child;
         }
         auto to_expand = false;
@@ -350,7 +351,7 @@ std::pair<UCTNode*, float> UCTNode::uct_select_child(int color, bool is_root) {
             actual_value_of_best = actual_value;
             q_of_best = actual_winrate;
             policy_of_best = psa;
-            visits_of_best = child.get_visits();
+            visits_of_best = visits;
         }
     }
 
