@@ -63,7 +63,7 @@ public:
     bool valid() const;
     bool active() const;
     int get_move() const;
-    double get_visits(visit_type type = SEL) const;
+    double get_visits(visit_type type = WR) const;
     float get_policy() const;
     void set_policy(float policy);
     float get_eval(int tomove) const;
