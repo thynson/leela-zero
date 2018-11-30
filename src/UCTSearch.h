@@ -129,10 +129,10 @@ private:
 
     std::mutex m_mutex;
     std::queue<std::unique_ptr<BackupData>> backup_queue;
-    size_t max_queue_length;
+    std::atomic<size_t> max_queue_length;
     void backup(BackupData& bd);
     void failed_simulation(BackupData& bd);
-    int m_failed_simulations{ 0 };
+    std::atomic<int> m_failed_simulations{0};
 };
 
 class UCTWorker {
