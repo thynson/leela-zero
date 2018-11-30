@@ -406,7 +406,7 @@ void UCTNode::sort_children(int color) {
 
 UCTNode& UCTNode::get_best_root_child(int color, bool running) {
     if (running) { wait_expanded(); } else
-    if (m_expand_state == ExpandState::EXPANDING) { expand_cancel(); }
+    if (m_expand_state == ExpandState::EXPANDING) { expand_done(); }
 
     assert(!m_children.empty());
 
