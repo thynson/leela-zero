@@ -127,7 +127,7 @@ static void parse_commandline(int argc, char *argv[]) {
         ("benchmark", "Test network and exit. Default args:\n-v3200 --noponder "
                       "-m0 -t1 -s1.")
         ("cpu-only", "Use CPU-only implementation and do not use GPU.")
-        ("disable-frac-backup", "Enable fractional backup feature.")
+        ("disable-frac-backup", "Disable fractional backup feature.")
         ;
 #ifdef USE_OPENCL
     po::options_description gpu_desc("GPU options");
