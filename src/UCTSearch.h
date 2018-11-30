@@ -129,7 +129,7 @@ private:
 
     std::mutex m_mutex;
     std::queue<std::unique_ptr<BackupData>> backup_queue;
-    std::atomic<size_t> max_queue_length;
+    size_t max_pending_backups;
     void backup(BackupData& bd);
     void failed_simulation(BackupData& bd);
     std::atomic<int> m_failed_simulations{0};

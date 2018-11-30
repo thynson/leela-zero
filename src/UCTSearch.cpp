@@ -163,7 +163,7 @@ void UCTSearch::update_root() {
     m_playouts = 0;
     m_positions = 0;
     m_failed_simulations = 0;
-    max_queue_length = 0;
+    max_pending_backups = 0;
 
 #ifndef NDEBUG
     auto start_nodes = m_root->count_nodes_and_clear_expand_state();
@@ -306,7 +306,7 @@ void UCTSearch::play_simulation(std::unique_ptr<GameState> currstate,
                 bd->symmetry = result_sym.second;
                 std::unique_lock<std::mutex> lk(m_mutex);
                 backup_queue.push(std::move(bd));
-                max_queue_length = std::max(max_queue_length.load(), backup_queue.size());
+                max_pending_backups = std::max(max_pending_backups, backup_queue.size());
             }
             return;
         }
@@ -879,14 +879,14 @@ int UCTSearch::think(int color, passflag_t passflag) {
     if (elapsed_centis+1 > 0) {
         myprintf("%7.2f visits, %d nodes, %d playouts, %.0f n/s, %.0f pos/s\n\n",
                  m_root->get_visits(),
-                 static_cast<int>(m_nodes),
-                 static_cast<int>(m_playouts),
+                 m_nodes.load(),
+                 m_playouts.load(),
                  (m_playouts * 100.0) / (elapsed_centis+1),
                  (m_positions * 100.0) / (elapsed_centis+1));
 
         m_network.nncache_dump_stats();
         myprintf("failed simulations: %d\n", m_failed_simulations.load());
-        myprintf("max pending backups: %d\n", max_queue_length.load());
+        myprintf("max pending backups: %d\n", max_pending_backups);
 #ifdef USE_OPENCL
 #ifndef NDEBUG
         myprintf("batch stats: %d %d\n", batch_stats[0].load(), batch_stats[1].load());
@@ -950,7 +950,7 @@ void UCTSearch::ponder() {
     myprintf("\n%d visits, %d nodes\n\n", m_root->get_visits(), m_nodes.load());
     m_network.nncache_dump_stats();
     myprintf("failed simulations: %d\n", m_failed_simulations.load());
-    myprintf("max pending backups: %d\n", max_queue_length.load());
+    myprintf("max pending backups: %d\n", max_pending_backups);
 
     // Copy the root state. Use to check for tree re-use in future calls.
     m_last_rootstate = std::make_unique<GameState>(m_rootstate);
