@@ -352,6 +352,7 @@ std::pair<UCTNode*, float> UCTNode::uct_select_child(int color, bool is_root) {
             q_of_best = actual_winrate;
             policy_of_best = psa;
             visits_of_best = visits;
+            if (to_expand) { break; }
         }
     }
 
@@ -393,7 +394,7 @@ void UCTNode::sort_children(int color) {
 
 UCTNode& UCTNode::get_best_root_child(int color, bool running) {
     if (running) { wait_expanded(); } else
-    if (m_expand_state == ExpandState::EXPANDING) { expand_cancel(); }
+    if (m_expand_state == ExpandState::EXPANDING) { expand_done(); }
 
     assert(!m_children.empty());
 

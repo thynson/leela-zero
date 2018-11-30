@@ -127,7 +127,7 @@ static void parse_commandline(int argc, char *argv[]) {
         ("benchmark", "Test network and exit. Default args:\n-v3200 --noponder "
                       "-m0 -t1 -s1.")
         ("cpu-only", "Use CPU-only implementation and do not use GPU.")
-        ("frac-backup", "Enable fractional backup feature.")
+        ("disable-frac-backup", "Enable fractional backup feature.")
         ;
 #ifdef USE_OPENCL
     po::options_description gpu_desc("GPU options");
@@ -224,8 +224,8 @@ static void parse_commandline(int argc, char *argv[]) {
         cfg_quiet = true;  // Set this early to avoid unnecessary output.
     }
 
-    if (vm.count("frac-backup")) {
-        cfg_frac_backup = true;
+    if (vm.count("disable-frac-backup")) {
+        cfg_frac_backup = false;
     }
 
 #ifdef USE_TUNER
