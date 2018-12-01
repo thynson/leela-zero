@@ -886,7 +886,7 @@ int UCTSearch::think(int color, passflag_t passflag) {
 
         m_network.nncache_dump_stats();
         myprintf("failed simulations: %d\n", m_failed_simulations.load());
-        myprintf("max pending backups: %d\n", max_pending_backups);
+        myprintf("max pending backups: %zu\n", max_pending_backups);
 #ifdef USE_OPENCL
 #ifndef NDEBUG
         myprintf("batch stats: %d %d\n", batch_stats[0].load(), batch_stats[1].load());
