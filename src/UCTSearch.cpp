@@ -37,6 +37,14 @@
 #include "Training.h"
 #include "Utils.h"
 
+std::atomic<int> UCTSearch::m_nodes = 0;
+std::mutex UCTSearch::m_mutex;
+int UCTSearch::m_size_w_mult; // with multiplicity
+std::unordered_map<UCTNode*, std::unique_ptr<BackupData>> UCTSearch::m_backup_cache;
+int UCTSearch::max_pending_w_mult;
+int UCTSearch::max_mult;
+std::atomic<int> UCTSearch::m_total_playouts;
+
 using namespace Utils;
 
 constexpr int UCTSearch::UNLIMITED_PLAYOUTS;
@@ -161,9 +169,12 @@ void UCTSearch::update_root() {
     // Definition of m_playouts is playouts per search call.
     // So reset this count now.
     m_playouts = 0;
+    m_total_playouts = 0; //
     m_positions = 0;
     m_failed_simulations = 0;
     max_pending_backups = 0;
+    max_pending_w_mult = 0;
+    max_mult = 0;
 
 #ifndef NDEBUG
     auto start_nodes = m_root->count_nodes_and_clear_expand_state();
@@ -186,7 +197,7 @@ void UCTSearch::update_root() {
 #endif
 }
 
-float UCTSearch::get_min_psa_ratio() const {
+float UCTSearch::get_min_psa_ratio() {
     const auto mem_full = UCTNodePointer::get_tree_size() / static_cast<float>(cfg_max_tree_size);
     // If we are halfway through our memory budget, start trimming
     // moves with very low policy priors.
@@ -206,48 +217,26 @@ float UCTSearch::get_min_psa_ratio() const {
 
 void UCTSearch::backup(BackupData& bd) {
     auto path = bd.path;
-    auto factor = 1.0f;
-    auto leaf = true;
-    for (auto nf = path.rbegin(); nf != path.rend(); ++nf) {
-        auto sel_factor = factor * nf->factor;
-        nf->node->update(bd.eval, bd.multiplicity, factor, sel_factor);
-        if (leaf) { nf->node->expand_done(); leaf = false; }
-        factor = sel_factor;
-    }
-    m_playouts++;
-}
+    auto node = bd.path.back().node;
+    auto had_children = node->has_children();
+    auto min_psa_ratio = bd.path.size() == 1 ? 0.0 : get_min_psa_ratio();
+    m_total_playouts++;
+    node->create_children(bd.netresult->result, bd.symmetry, m_nodes, *bd.state, min_psa_ratio);
+    bd.path.back().node->expand_done();
+    if (!had_children) {
+        auto eval = bd.netresult->result.winrate;
+        bd.eval = (bd.state->get_to_move() == FastBoard::BLACK ? eval : 1.0f - eval);
 
-void UCTSearch::backup() {
-    if (!m_run) { return; }
-    std::unique_lock<std::mutex> lk(m_mutex);
-    while (!backup_queue.empty() &&
-           (!backup_queue.front()->netresult || backup_queue.front()->netresult->ready.load())) {
-        auto bd = std::move(backup_queue.front());
-        backup_queue.pop();
-        lk.unlock();
-        if (bd->netresult) {
-            auto node = bd->path.back().node;
-            auto had_children = node->has_children();
-            auto min_psa_ratio = bd->path.size() == 1 ? 0.0 : get_min_psa_ratio();
-            node->create_children(bd->netresult->result, bd->symmetry, m_nodes, *bd->state, min_psa_ratio);
-            if (!had_children) {
-                auto eval = bd->netresult->result.winrate;
-                bd->eval = (bd->state->get_to_move() == FastBoard::BLACK ? eval : 1.0f - eval);
-                backup(*bd);
-            }
-            else {
-                failed_simulation(*bd);
-                bd->path.back().node->expand_done();
-            }
+        auto factor = 1.0f;
+        for (auto nf = path.rbegin(); nf != path.rend(); ++nf) {
+            auto sel_factor = factor * nf->factor;
+            nf->node->update(bd.eval, bd.multiplicity, factor, sel_factor);
+            factor = sel_factor;
         }
-        else {
-            failed_simulation(*bd);
-        }
-        if (m_run) { lk.lock(); }
-        else { return; }
     }
-    lk.unlock();
-    m_cv.notify_all();
+    else {
+        failed_simulation(bd);
+    }
 }
 
 void UCTSearch::failed_simulation(BackupData& bd) {
@@ -263,13 +252,34 @@ float eval_from_score(float board_score) {
     else { return 0.5f; }
 }
 
+bool UCTSearch::backupdata_insert(std::unique_ptr<BackupData>& bd, bool first_visit) {
+    auto node = bd->path.back().node;
+    std::unique_lock<std::mutex> lk(m_mutex);
+    if (first_visit) {
+        m_backup_cache.emplace(node, std::move(bd));
+        max_pending_backups = std::max(max_pending_backups, m_backup_cache.size());
+        max_pending_w_mult = std::max(max_pending_w_mult, ++m_size_w_mult);
+        return false;
+    }
+    else {
+        auto iter = m_backup_cache.find(node);
+        if (iter != m_backup_cache.end()) {
+            max_mult = std::max(max_mult, ++(iter->second->multiplicity));
+            max_pending_w_mult = std::max(max_pending_w_mult, ++m_size_w_mult);
+            return true;
+        }
+        else {
+            return false;
+        }
+    }
+}
+
 void UCTSearch::play_simulation(std::unique_ptr<GameState> currstate,
                                         UCTNode* node,
                                         int thread_num) {
     auto factor = 1.0f;
     auto bd = std::make_unique<BackupData>();
-    auto is_root = true;
-    while(true) {
+    while (true) {
         node->virtual_loss();
         bd->path.emplace_back(node, factor);
         const auto color = currstate->get_to_move();
@@ -283,62 +293,44 @@ void UCTSearch::play_simulation(std::unique_ptr<GameState> currstate,
 
         // expand a node
         if (node->expandable() && node->acquire_expanding()) {
+            bool ready;
             const auto result_sym = m_network.get_output0(
-                &*currstate, Network::Ensemble::RANDOM_SYMMETRY);
-            //if (!result_sym.first) { failed_simulation(*bd); myprintf("strange fail!\n"); return; }
-            if (result_sym.first->ready.load()) {
-                const auto min_psa_ratio = is_root ? 0.0 : get_min_psa_ratio();
-                auto had_children = node->has_children();
-                node->create_children(result_sym.first->result, result_sym.second, m_nodes, *currstate, min_psa_ratio);
-                if (!had_children) {
-                    auto eval = result_sym.first->result.winrate;
-                    bd->eval = (color == FastBoard::BLACK ? eval : 1.0f - eval);
-                    backup(*bd);
-                }
-                else {
-                    failed_simulation(*bd);
-                    node->expand_done();
-                }
+                node, ready, &*currstate, Network::Ensemble::RANDOM_SYMMETRY);
+            if (!node->has_children()) {
+                m_playouts++;
+            }
+            bd->state = std::move(currstate);
+            bd->netresult = result_sym.first;
+            bd->symmetry = result_sym.second;
+            if (ready) {
+                backup(*bd);
             }
             else {
-                bd->state = std::move(currstate);
-                bd->netresult = result_sym.first;
-                bd->symmetry = result_sym.second;
-                std::unique_lock<std::mutex> lk(m_mutex);
-                backup_queue.push(std::move(bd));
-                max_pending_backups = std::max(max_pending_backups, backup_queue.size());
+                backupdata_insert(bd, true);
             }
             return;
         }
 
         // select a child
-        if (node->has_children()) {
-            auto child_factor = node->uct_select_child(color, node == m_root.get());
-            node = child_factor.first;
-            if (node == nullptr) {
-                m_failed_simulations++;
-                std::unique_lock<std::mutex> lk(m_mutex);
-                if (!backup_queue.empty() && node == backup_queue.back()->path.back().node) {
-                    backup_queue.back()->multiplicity++;
-                }
-                else { backup_queue.push(std::move(bd)); }
-                return; 
-            }
-            factor = child_factor.second;
-            auto move = node->get_move();
-            currstate->play_move(move);
-            if (move != FastBoard::PASS && currstate->superko()) {
-                //node->expand_done();
-                node->invalidate();
+        auto child_factor = node->uct_select_child(color, node == m_root.get());
+        // if node expanded then return node itself, then backup net_eval? if expanding then return nullptr ..
+        node = child_factor.first;
+        if (node == nullptr) {
+            m_failed_simulations++;
+            //myprintf("failed! ");
+            if (!backupdata_insert(bd, false)) {
                 failed_simulation(*bd);
-                return;
             }
+            return;
         }
-        else {
+        factor = child_factor.second;
+        auto move = node->get_move();
+        currstate->play_move(move);
+        if (move != FastBoard::PASS && currstate->superko()) {
+            node->invalidate();
             failed_simulation(*bd);
             return;
         }
-        is_root = false;
     }
 }
 
@@ -672,8 +664,8 @@ void UCTSearch::dump_analysis(int playouts) {
 
     std::string pvstring = get_pv(tempstate, *m_root);
     float winrate = 100.0f * m_root->get_raw_eval(color);
-    myprintf("Playouts: %d, Win: %5.2f%%, PV: %s\n",
-             playouts, winrate, pvstring.c_str());
+    myprintf("Playouts: %d, Total PO: %d, Positions: %d, Win: %5.2f%%, PV: %s\n",
+             playouts, m_total_playouts.load(), m_positions.load(), winrate, pvstring.c_str());
 }
 
 bool UCTSearch::is_running() const {
@@ -810,7 +802,7 @@ int UCTSearch::think(int color, passflag_t passflag) {
     if (m_root->expandable()) {
         play_simulation(std::make_unique<GameState>(m_rootstate), m_root.get(), 0);
         std::unique_lock<std::mutex> lk(m_mutex);
-        m_cv.wait(lk, [this] { return backup_queue.empty(); });
+        m_cv.wait(lk, [this] { return m_backup_cache.empty(); });
     }
     m_root->prepare_root_node(m_network, color, m_nodes, m_rootstate);
 
@@ -856,8 +848,6 @@ int UCTSearch::think(int color, passflag_t passflag) {
     lk0.unlock();
     // below can move to update_root()
     tg.wait_all();
-    std::unique_lock<std::mutex> lk(m_mutex);
-    backup_queue = {};
 
     // reactivate all pruned root children
     for (const auto& node : m_root->get_children()) {
@@ -887,6 +877,8 @@ int UCTSearch::think(int color, passflag_t passflag) {
         m_network.nncache_dump_stats();
         myprintf("failed simulations: %d\n", m_failed_simulations.load());
         myprintf("max pending backups: %zu\n", max_pending_backups);
+        myprintf("max pending with multiplicities: %d\n", max_pending_w_mult);
+        myprintf("max multiplicity: %d\n", max_mult);
 #ifdef USE_OPENCL
 #ifndef NDEBUG
         myprintf("batch stats: %d %d\n", batch_stats[0].load(), batch_stats[1].load());
@@ -908,7 +900,7 @@ void UCTSearch::ponder() {
     if (m_root->expandable()) { 
         play_simulation(std::make_unique<GameState>(m_rootstate), m_root.get(), 0); 
         std::unique_lock<std::mutex> lk(m_mutex);
-        m_cv.wait(lk, [&lk, this] { return backup_queue.empty(); });
+        m_cv.wait(lk, [&lk, this] { return m_backup_cache.empty(); });
     }
     m_root->prepare_root_node(m_network, m_rootstate.board.get_to_move(),
                               m_nodes, m_rootstate);
@@ -940,8 +932,7 @@ void UCTSearch::ponder() {
     m_network.notify();
     lk0.unlock();
     tg.wait_all();
-    std::unique_lock<std::mutex> lk(m_mutex);
-    backup_queue = {};
+    clear_up();
 
     // display search info
     myprintf("\n");
@@ -950,7 +941,9 @@ void UCTSearch::ponder() {
     myprintf("\n%d visits, %d nodes\n\n", m_root->get_visits(), m_nodes.load());
     m_network.nncache_dump_stats();
     myprintf("failed simulations: %d\n", m_failed_simulations.load());
-    myprintf("max pending backups: %d\n", max_pending_backups);
+    myprintf("max pending backups: %zu\n", max_pending_backups);
+    myprintf("max pending with multiplicities: %d\n", max_pending_w_mult);
+    myprintf("max multiplicity: %d\n", max_mult);
 
     // Copy the root state. Use to check for tree re-use in future calls.
     m_last_rootstate = std::make_unique<GameState>(m_rootstate);

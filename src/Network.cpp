@@ -710,14 +710,11 @@ bool Network::probe_cache(const GameState* const state,
 
     return false;
 }
-*/
+
 
 std::pair<Netresult_ptr, int> Network::probe_cache0(const GameState* const state) {
 
     for (auto sym = 0; sym < Network::NUM_SYMMETRIES; ++sym) {
-        if (sym == Network::IDENTITY_SYMMETRY) {
-            continue;
-        }
         const auto hash = state->get_symmetry_hash(sym);
         auto result = m_nncache.lookup_and_insert(hash, false);
         if (result) {
@@ -726,8 +723,11 @@ std::pair<Netresult_ptr, int> Network::probe_cache0(const GameState* const state
     }
     return std::pair<Netresult_ptr, int>(nullptr, Network::IDENTITY_SYMMETRY);
 }
+*/
 
 std::pair<Netresult_ptr, int> Network::get_output0(
+    UCTNode* node,
+    bool & ready,
     const GameState* const state, const Ensemble ensemble,
     const int symmetry, const bool skip_cache) {
 
@@ -736,6 +736,7 @@ std::pair<Netresult_ptr, int> Network::get_output0(
         return result_sym;
     }
 
+    bool found = false;
     std::unique_lock<std::mutex> lock(m_nncache.m_mutex);
     if (!skip_cache) {
         // If we are not generating a self-play game, try to find
@@ -744,20 +745,30 @@ std::pair<Netresult_ptr, int> Network::get_output0(
             && state->get_movenum()
             < (state->get_timecontrol().opening_moves(BOARD_SIZE) / 2)) {
             // See if we already have this in the cache.
-            result_sym = probe_cache0(state);
+            for (auto sym = 1; sym < Network::NUM_SYMMETRIES; ++sym) {
+                const auto hash = state->get_symmetry_hash(sym);
+                auto result = m_nncache.lookup_and_insert(hash, false, true, node);
+                if (result) {
+                    result_sym = std::make_pair(result, sym);
+                    found = true;
+                    break;
+                }
+            }
         }
     }
-    if (result_sym.first) {
+    if (found) {
         return result_sym;
     }
     else {
         result_sym = std::pair<Netresult_ptr, int>(m_nncache.lookup_and_insert(state->board.get_hash(), 
-                                                     true, !skip_cache),
+                                                     true, !skip_cache, node),
                                                    Network::IDENTITY_SYMMETRY);
     }
+    ready = result_sym.first->ready;
+    bool first_visit = (result_sym.first->backup_obligations.size() == 1);
     lock.unlock();
 
-    if (result_sym.first->forwarded.load()) {
+    if (!first_visit) {
         return result_sym;
     }
     if (ensemble == DIRECT) {
@@ -799,7 +810,6 @@ std::pair<Netresult_ptr, int> Network::get_output0(
         }
 #endif
     }
-    result_sym.first->forwarded.store(true);
     return result_sym;
 }
 
@@ -910,7 +920,22 @@ void Network::process_output(
 
     result->result.policy_pass = outputs[NUM_INTERSECTIONS];
     result->result.winrate = winrate;
-    result->ready.store(true);
+    std::unique_lock<std::mutex> lk(m_nncache.m_mutex);
+    result->ready = true;
+    auto obligations = std::move(result->backup_obligations);
+    lk.unlock();
+    for (auto node : obligations) {
+        auto& cache = UCTSearch::m_backup_cache;
+        std::unique_lock<std::mutex> lk0(UCTSearch::m_mutex);
+        auto iter = cache.find(node);
+        if (iter != cache.end()) {
+            auto bd = std::move(iter->second);
+            cache.erase(iter);
+            UCTSearch::m_size_w_mult -= bd->multiplicity;
+            lk0.unlock();
+            UCTSearch::backup(*bd);
+        }
+    }
 }
 
 Network::Netresult Network::get_output_internal(

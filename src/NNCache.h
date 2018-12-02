@@ -28,6 +28,7 @@
 #include <mutex>
 #include <unordered_map>
 
+class UCTNode;
 class NNCache {
 public:
 
@@ -74,9 +75,9 @@ public:
     struct Entry {
         //Entry(const Netresult& r)
         //    : result(r) {}
-        std::atomic<bool> ready{false};
-        std::atomic<bool> forwarded{false};
+        bool ready{false};
         Netresult result;  // ~ 1.4KiB
+        std::vector<UCTNode*> backup_obligations;
     };
 
     static constexpr size_t ENTRY_SIZE =
@@ -84,7 +85,7 @@ public:
         + sizeof(std::uint64_t)
         + sizeof(std::shared_ptr<Entry>);
 
-    std::shared_ptr<Entry> lookup_and_insert(std::uint64_t hash, bool insert, bool lookup = true);
+    std::shared_ptr<Entry> lookup_and_insert(std::uint64_t hash, bool insert, bool lookup, UCTNode* node);
     std::mutex m_mutex;
 private:
     

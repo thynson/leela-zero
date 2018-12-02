@@ -68,7 +68,10 @@ public:
         const int symmetry = -1,
         const bool skip_cache = false,
         const bool force_selfcheck = false);
-    std::pair<Netresult_ptr, int> get_output0(const GameState* const state,
+    std::pair<Netresult_ptr, int> get_output0(
+                         UCTNode* node,
+                         bool & ready, 
+                         const GameState* const state,
                          const Ensemble ensemble,
                          const int symmetry = -1,
                          const bool skip_cache = false);

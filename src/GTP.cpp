@@ -69,6 +69,7 @@ bool cfg_sgemm_exhaustive;
 bool cfg_tune_only;
 int cfg_batch_size;
 bool cfg_frac_backup;
+bool cfg_vl_in_parentvisits;
 #ifdef USE_HALF
 precision_t cfg_precision;
 #endif
@@ -129,6 +130,7 @@ void GTP::setup_default_parameters() {
     // we will re-calculate this on Leela.cpp
     cfg_batch_size = 5;
     cfg_frac_backup = true;
+    cfg_vl_in_parentvisits = false;
 #ifdef USE_HALF
     cfg_precision = precision_t::HALF;
 #endif
@@ -446,6 +448,7 @@ void GTP::execute(GameState & game, const std::string& xinput) {
                 } else {
                     gtp_printf_raw("play %s\n", vertex.c_str());
                 }
+                search->clear_up();
             }
             if (cfg_allow_pondering) {
                 // now start pondering

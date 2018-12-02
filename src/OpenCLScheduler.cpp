@@ -301,8 +301,8 @@ void OpenCLScheduler<net_t>::forward0(std::unique_ptr<const std::vector<float>> 
     if (m_search->m_run && (int)m_forward_queue0.size() >= m_max_queue_size.load()) {
         m_cv0.wait(lk, [&] { return (int)m_forward_queue0.size() < m_max_queue_size.load()
             || !m_search->m_run; });
-        lk.unlock();
-        m_search->backup();
+        //lk.unlock();
+        //m_search->backup();
     }
 }
 
@@ -399,6 +399,7 @@ void OpenCLScheduler<net_t>::batch_worker(const size_t gnum, const size_t i) {
         }
 
         {
+            std::vector<std::thread> backup_threads;
             auto index = 0;
             for (auto it = begin(inputs); it != end(inputs); ++it) {
                 std::vector<float> out_p(begin(batch_output_pol) + out_pol_size * index,
@@ -406,14 +407,19 @@ void OpenCLScheduler<net_t>::batch_worker(const size_t gnum, const size_t i) {
                 std::vector<float> out_v(begin(batch_output_val) + out_val_size * index,
                                          begin(batch_output_val) + out_val_size * (index + 1));
                 index++;
-                m_network->process_output(out_p, out_v, (*it)->tomove, (*it)->symmetry, (*it)->result);
+                backup_threads.emplace_back(std::thread([=](std::vector<float>& p, std::vector<float>& v) { 
+                    m_network->process_output(p, v,
+                    (*it)->tomove, (*it)->symmetry, (*it)->result); }, out_p, out_v));
+            }
+            for (auto iter = backup_threads.begin(); iter != backup_threads.end(); iter++) {
+                iter->join();
             }
         }
-
+        m_search->m_cv.notify_all();
         m_max_queue_size += cfg_batch_size;
         //myprintf("max queue size: %d - worker %d\n", m_max_queue_size.load(), i);
         m_cv0.notify_all();
-        m_search->backup();
+        //m_search->backup();
         //m_search->m_cv.notify_all();
     }
 }
