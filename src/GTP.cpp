@@ -448,7 +448,6 @@ void GTP::execute(GameState & game, const std::string& xinput) {
                 } else {
                     gtp_printf_raw("play %s\n", vertex.c_str());
                 }
-                search->clear_up();
             }
             if (cfg_allow_pondering) {
                 // now start pondering

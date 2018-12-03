@@ -725,15 +725,13 @@ std::pair<Netresult_ptr, int> Network::probe_cache0(const GameState* const state
 }
 */
 
-std::pair<Netresult_ptr, int> Network::get_output0(
-    UCTNode* node,
-    bool & ready,
-    const GameState* const state, const Ensemble ensemble,
+void Network::get_output0(
+    BackupData& bd,
+    const Ensemble ensemble,
     const int symmetry, const bool skip_cache) {
 
-    std::pair<Netresult_ptr, int> result_sym;
-    if (state->board.get_boardsize() != BOARD_SIZE) {
-        return result_sym;
+    if (bd.state->board.get_boardsize() != BOARD_SIZE) {
+        //return result_sym;
     }
 
     bool found = false;
@@ -742,39 +740,41 @@ std::pair<Netresult_ptr, int> Network::get_output0(
         // If we are not generating a self-play game, try to find
         // symmetries if we are in the early opening.
         if (!cfg_noise && !cfg_random_cnt
-            && state->get_movenum()
-            < (state->get_timecontrol().opening_moves(BOARD_SIZE) / 2)) {
+            && bd.state->get_movenum()
+            < (bd.state->get_timecontrol().opening_moves(BOARD_SIZE) / 2)) {
             // See if we already have this in the cache.
-            for (auto sym = 1; sym < Network::NUM_SYMMETRIES; ++sym) {
+            for (auto sym = 0; sym < Network::NUM_SYMMETRIES; ++sym) {
                 const auto hash = state->get_symmetry_hash(sym);
-                auto result = m_nncache.lookup_and_insert(hash, false, true, node);
+                auto result = m_nncache.lookup_and_insert(hash, false, true, bd.path.back().node);
                 if (result) {
-                    result_sym = std::make_pair(result, sym);
+                    bd.netresult = result;
+                    bd.symmetry = sym;
                     found = true;
                     break;
                 }
             }
         }
     }
-    if (found) {
-        return result_sym;
+    if (!found) {
+        bd.symmetry = Network::IDENTITY_SYMMETRY; // = 0
+        bd.netresult = m_nncache.lookup_and_insert(bd.state->board.get_hash(), true, !skip_cache, bd.path.back().node);
     }
-    else {
-        result_sym = std::pair<Netresult_ptr, int>(m_nncache.lookup_and_insert(state->board.get_hash(), 
-                                                     true, !skip_cache, node),
-                                                   Network::IDENTITY_SYMMETRY);
-    }
-    ready = result_sym.first->ready;
-    bool first_visit = (result_sym.first->backup_obligations.size() == 1);
+    bool ready = bd.netresult->ready;
+    bool first_visit = (bd.netresult->backup_obligations.size() == 1);
     lock.unlock();
 
+    if (ready) {
+        UCTSearch::backup(bd);
+        return;
+    }
+    UCTSearch::backupdata_insert(bd);
     if (!first_visit) {
-        return result_sym;
+        return;
     }
     if (ensemble == DIRECT) {
         assert(symmetry >= 0 && symmetry < NUM_SYMMETRIES);
-        m_forward->forward0(std::make_unique<const std::vector<float>>(gather_features(state, symmetry)),
-                            state->get_to_move(), symmetry, result_sym.first);
+        m_forward->forward0(std::make_unique<const std::vector<float>>(gather_features(&*bd.state, symmetry)),
+                            bd.state->get_to_move(), symmetry, bd.netresult);
     }
     else if (ensemble == AVERAGE) {
         /*
@@ -796,8 +796,8 @@ std::pair<Netresult_ptr, int> Network::get_output0(
         assert(ensemble == RANDOM_SYMMETRY);
         assert(symmetry == -1);
         const auto rand_sym = Random::get_Rng().randfix<NUM_SYMMETRIES>();
-        m_forward->forward0(std::make_unique<const std::vector<float>>(gather_features(state, rand_sym)),
-                            state->get_to_move(), rand_sym, result_sym.first);
+        m_forward->forward0(std::make_unique<const std::vector<float>>(gather_features(&*bd.state, rand_sym)),
+                            bd.state->get_to_move(), rand_sym, bd.netresult);
 #ifdef USE_OPENCL_SELFCHECK
         // Both implementations are available, self-check the OpenCL driver by
         // running both with a probability of 1/2000.
@@ -810,7 +810,6 @@ std::pair<Netresult_ptr, int> Network::get_output0(
         }
 #endif
     }
-    return result_sym;
 }
 
 Network::Netresult Network::get_output(
@@ -931,9 +930,9 @@ void Network::process_output(
         if (iter != cache.end()) {
             auto bd = std::move(iter->second);
             cache.erase(iter);
-            UCTSearch::m_size_w_mult -= bd->multiplicity;
+            UCTSearch::m_size_w_mult -= bd.multiplicity;
             lk0.unlock();
-            UCTSearch::backup(*bd);
+            UCTSearch::backup(bd);
         }
     }
 }

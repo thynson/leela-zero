@@ -99,19 +99,15 @@ public:
 
     static std::mutex m_mutex;
     static int m_size_w_mult; // with multiplicity
-    static std::unordered_map<UCTNode*, std::unique_ptr<BackupData>> m_backup_cache;
+    static std::unordered_map<UCTNode*, BackupData> m_backup_cache;
     std::size_t max_pending_backups;
     static int max_pending_w_mult;
     static int max_mult;
-    void clear_up() {
-        std::lock_guard<std::mutex> lk(m_mutex);
-        m_size_w_mult = 0;
-        m_backup_cache.clear();
-    }
     static void backup(BackupData& bd);
+    static void backupdata_insert(BackupData& bd);
+    static bool multiplicity_increment(UCTNode* node);
 
 private:
-    bool backupdata_insert(std::unique_ptr<BackupData>& bd, bool first_visit);
     static float get_min_psa_ratio();
     void dump_stats(FastState& state, UCTNode& parent);
     void tree_stats(const UCTNode& node);
@@ -132,8 +128,7 @@ private:
     std::unique_ptr<GameState> m_last_rootstate;
     std::unique_ptr<UCTNode> m_root;
     static std::atomic<int> m_nodes;
-    std::atomic<int> m_playouts{0};
-    static std::atomic<int> m_total_playouts;
+    static std::atomic<int> m_playouts;
     int m_maxplayouts;
     int m_maxvisits;
 
