@@ -43,6 +43,7 @@
 #include "SMP.h"
 #endif
 
+struct BackupData;
 
 // Winograd filter transformation changes 3x3 filters to M + 3 - 1
 constexpr auto WINOGRAD_M = 4;
@@ -70,7 +71,7 @@ public:
         const bool force_selfcheck = false);
     void get_output0(BackupData& bd,
         const Ensemble ensemble,
-        const int symmetry = -1,
+        int symmetry = -1,
         const bool skip_cache = false);
 
     static constexpr auto INPUT_MOVES = 8;
@@ -99,7 +100,7 @@ public:
     void nncache_dump_stats() { m_nncache.dump_stats(); }
     void nncache_clear();
 
-    void set_search(UCTSearch* search) { m_forward->m_search = search; m_forward->m_network = this; }
+    void set_search(UCTSearch* search) { m_search = m_forward->m_search = search; m_forward->m_network = this; }
     std::mutex& get_queue_mutex() { return m_forward->m_mutex; }
     void notify() { m_forward->m_cv0.notify_all(); }
     void process_output(std::vector<float>& policy_data,
@@ -113,6 +114,7 @@ public:
         Network::NUM_SYMMETRIES> symmetry_nn_idx_table;
 
 private:
+    UCTSearch * m_search;
     std::pair<int, int> load_v1_network(std::istream& wtfile);
     std::pair<int, int> load_network_file(const std::string& filename);
 

@@ -97,15 +97,20 @@ public:
     std::atomic<bool> m_run{false};
     std::condition_variable m_cv;
 
-    static std::mutex m_mutex;
-    static int m_size_w_mult; // with multiplicity
-    static std::unordered_map<UCTNode*, BackupData> m_backup_cache;
+    std::mutex m_mutex;
+    int m_size_w_mult; // with multiplicity
+    std::unordered_map<UCTNode*, BackupData> m_backup_cache;
     std::size_t max_pending_backups;
-    static int max_pending_w_mult;
-    static int max_mult;
-    static void backup(BackupData& bd);
-    static void backupdata_insert(BackupData& bd);
-    static bool multiplicity_increment(UCTNode* node);
+    int max_pending_w_mult;
+    int max_mult;
+    void backup(UCTNode* node);
+    void backup(BackupData& bd);
+    void backupdata_insert(BackupData& bd);
+    bool multiplicity_increment(UCTNode* node);
+    void backup();
+
+    std::mutex m_return_mutex;
+    std::deque<UCTNode*> m_return_queue;
 
 private:
     static float get_min_psa_ratio();
@@ -127,8 +132,8 @@ private:
     GameState & m_rootstate;
     std::unique_ptr<GameState> m_last_rootstate;
     std::unique_ptr<UCTNode> m_root;
-    static std::atomic<int> m_nodes;
-    static std::atomic<int> m_playouts;
+    std::atomic<int> m_nodes{0};
+    std::atomic<int> m_playouts;
     int m_maxplayouts;
     int m_maxvisits;
 
@@ -136,7 +141,7 @@ private:
 
     Network & m_network;
 
-    static void failed_simulation(BackupData& bd);
+    void failed_simulation(BackupData& bd);
     std::atomic<int> m_failed_simulations{0};
 };
 

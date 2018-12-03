@@ -37,14 +37,6 @@
 #include "Training.h"
 #include "Utils.h"
 
-std::atomic<int> UCTSearch::m_nodes = 0;
-std::mutex UCTSearch::m_mutex;
-int UCTSearch::m_size_w_mult; // with multiplicity
-std::unordered_map<UCTNode*, BackupData> UCTSearch::m_backup_cache;
-int UCTSearch::max_pending_w_mult;
-int UCTSearch::max_mult;
-std::atomic<int> UCTSearch::m_playouts;
-
 using namespace Utils;
 
 constexpr int UCTSearch::UNLIMITED_PLAYOUTS;
@@ -96,6 +88,7 @@ UCTSearch::UCTSearch(GameState& g, Network& network)
 }
 
 bool UCTSearch::advance_to_new_rootstate() {
+
     if (!m_root || !m_last_rootstate) {
         // No current state
         return false;
@@ -129,6 +122,11 @@ bool UCTSearch::advance_to_new_rootstate() {
         m_delete_futures.front().wait_all();
         m_delete_futures.pop_front();
     }
+
+    /* stub
+    if (m_root.get() != path[int(path.size()) - 1 - (bd.state->get_movenum() - m_rootstate.get_movenum())].node) {
+        return; 
+    }*/
 
     // Try to replay moves advancing m_root
     for (auto i = 0; i < depth; i++) {
@@ -175,6 +173,12 @@ void UCTSearch::update_root() {
     max_pending_w_mult = 0;
     max_mult = 0;
 
+    std::unique_lock<std::mutex> lk(m_mutex);
+    myprintf("Cleared: %d backup cache entries\n", m_backup_cache.size());
+    m_backup_cache.clear();
+    m_size_w_mult = 0;
+    lk.unlock();
+
 #ifndef NDEBUG
     auto start_nodes = m_root->count_nodes_and_clear_expand_state();
 #endif
@@ -216,13 +220,13 @@ float UCTSearch::get_min_psa_ratio() {
 
 void UCTSearch::backup(BackupData& bd) {
     auto path = bd.path;
-    if (m_root != path[int(path.size()) - 1 - (bd.state->get_movenum() - m_rootstate.get_movenum())]) { return; }
     auto node = path.back().node;
     auto had_children = node->has_children();
     auto min_psa_ratio = bd.path.size() == 1 ? 0.0 : get_min_psa_ratio();
     m_playouts++;
     node->create_children(bd.netresult->result, bd.symmetry, m_nodes, *bd.state, min_psa_ratio);
     bd.path.back().node->expand_done();
+    m_cv.notify_one();
     if (!had_children) {
         auto eval = bd.netresult->result.winrate;
         bd.eval = (bd.state->get_to_move() == FastBoard::BLACK ? eval : 1.0f - eval);
@@ -252,15 +256,42 @@ float eval_from_score(float board_score) {
     else { return 0.5f; }
 }
 
+void UCTSearch::backup(UCTNode* node) {
+    std::unique_lock<std::mutex> lk(m_mutex);
+    auto iter = m_backup_cache.find(node);
+    if (iter != m_backup_cache.end()) {
+        auto bd = std::move(iter->second);
+        m_backup_cache.erase(iter);
+        m_size_w_mult -= bd.multiplicity;
+        lk.unlock();
+        backup(bd);
+    }
+    else {
+        myprintf("Backup entry has been removed!\n"); //
+    }
+}
+
+void UCTSearch::backup() {
+    std::unique_lock<std::mutex> lk(m_return_mutex);
+    while (m_run && !m_return_queue.empty()) {
+        auto node = m_return_queue.front();
+        m_return_queue.pop_front();
+        lk.unlock();
+        backup(node);
+        lk.lock();
+    }
+}
+
 void UCTSearch::backupdata_insert(BackupData& bd) {
     auto node = bd.path.back().node;
-    std::unique_lock<std::mutex> lk(m_mutex);
+    std::lock_guard<std::mutex> lk(m_mutex);
     m_backup_cache.emplace(node, std::move(bd));
     max_pending_backups = std::max(max_pending_backups, m_backup_cache.size());
     max_pending_w_mult = std::max(max_pending_w_mult, ++m_size_w_mult);
 }
 
 bool UCTSearch::multiplicity_increment(UCTNode* node) {
+    std::lock_guard<std::mutex> lk(m_mutex);
     auto iter = m_backup_cache.find(node);
     if (iter != m_backup_cache.end()) {
         max_mult = std::max(max_mult, ++(iter->second.multiplicity));
@@ -651,8 +682,8 @@ void UCTSearch::dump_analysis(int playouts) {
 
     std::string pvstring = get_pv(tempstate, *m_root);
     float winrate = 100.0f * m_root->get_raw_eval(color);
-    myprintf("Playouts: %d, Total PO: %d, Positions: %d, Win: %5.2f%%, PV: %s\n",
-             playouts, m_total_playouts.load(), m_positions.load(), winrate, pvstring.c_str());
+    myprintf("Playouts: %d, Positions: %d, Win: %5.2f%%, PV: %s\n",
+             playouts, m_positions.load(), winrate, pvstring.c_str());
 }
 
 bool UCTSearch::is_running() const {
@@ -789,7 +820,7 @@ int UCTSearch::think(int color, passflag_t passflag) {
     if (m_root->expandable()) {
         play_simulation(std::make_unique<GameState>(m_rootstate), m_root.get(), 0);
         std::unique_lock<std::mutex> lk(m_mutex);
-        m_cv.wait(lk, [this] { return m_backup_cache.empty(); });
+        m_cv.wait(lk, [this] { return !m_root->expandable(); });
     }
     m_root->prepare_root_node(m_network, color, m_nodes, m_rootstate);
 
@@ -887,7 +918,7 @@ void UCTSearch::ponder() {
     if (m_root->expandable()) { 
         play_simulation(std::make_unique<GameState>(m_rootstate), m_root.get(), 0); 
         std::unique_lock<std::mutex> lk(m_mutex);
-        m_cv.wait(lk, [&lk, this] { return m_backup_cache.empty(); });
+        m_cv.wait(lk, [&lk, this] { return !m_root->expandable(); });
     }
     m_root->prepare_root_node(m_network, m_rootstate.board.get_to_move(),
                               m_nodes, m_rootstate);
