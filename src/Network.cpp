@@ -922,16 +922,17 @@ void Network::process_output(
     result->result.winrate = winrate;
     std::unique_lock<std::mutex> lk(m_nncache.m_mutex);
     result->ready = true;
+    /*
     std::unique_lock<std::mutex> lk0(m_search->m_return_mutex);
     std::move(begin(result->backup_obligations), end(result->backup_obligations),
               std::back_inserter(m_search->m_return_queue));
     result->backup_obligations.clear();
-    /*
+    */
     auto obligations = std::move(result->backup_obligations);
     lk.unlock();
     for (auto node : obligations) {
         m_search->backup(node);
-    }*/
+    }
 }
 
 Network::Netresult Network::get_output_internal(
