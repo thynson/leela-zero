@@ -27,6 +27,7 @@
 #include <memory>
 #include <mutex>
 #include <unordered_map>
+#include <vector>
 
 class UCTNode;
 class NNCache {
