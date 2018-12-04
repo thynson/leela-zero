@@ -128,7 +128,7 @@ static void parse_commandline(int argc, char *argv[]) {
                       "-m0 -t1 -s1.")
         ("cpu-only", "Use CPU-only implementation and do not use GPU.")
         ("disable-frac-backup", "Disable fractional backup feature.")
-        ("vl-in-parentvisits", "Virtual loss in sum of children's visits.")
+        ("no-vl-in-parentvisits", "No virtual loss in sum of children's visits.")
         ;
 #ifdef USE_OPENCL
     po::options_description gpu_desc("GPU options");
@@ -229,8 +229,8 @@ static void parse_commandline(int argc, char *argv[]) {
         cfg_frac_backup = false;
     }
 
-    if (vm.count("vl-in-parentvisits")) {
-        cfg_vl_in_parentvisits = true;
+    if (vm.count("no-vl-in-parentvisits")) {
+        cfg_vl_in_parentvisits = false;
     }
 
 #ifdef USE_TUNER

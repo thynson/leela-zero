@@ -130,7 +130,7 @@ void GTP::setup_default_parameters() {
     // we will re-calculate this on Leela.cpp
     cfg_batch_size = 5;
     cfg_frac_backup = true;
-    cfg_vl_in_parentvisits = false;
+    cfg_vl_in_parentvisits = true;
 #ifdef USE_HALF
     cfg_precision = precision_t::HALF;
 #endif

@@ -282,21 +282,20 @@ std::pair<UCTNode*, float> UCTNode::uct_select_child(int color, bool is_root) {
     auto total_visited_policy = 0.0f;
     auto parentvisits = 0.0;
     auto actual_parentvisits = 0.0;
+    
     for (const auto& child : m_children) {
         if (child.valid()) {
             actual_parentvisits += child.get_visits();
             if (cfg_vl_in_parentvisits) {
                 parentvisits += child.get_visits(VL);
             }
-            if (child.get_visits(WR) > 0.0) {
-                total_visited_policy += child.get_policy();
-            }
-            else {
+            if (child.get_visits(VL) == 0.0) { // VL
                 break; // children are ordered by policy (initially) or by visits (NodeComp), so this is good.
             }
         }
     }
     if (!cfg_vl_in_parentvisits) { parentvisits = actual_parentvisits; }
+ 
     auto numerator = std::sqrt(parentvisits);
     auto actual_numerator = std::sqrt(actual_parentvisits);
     auto parent_eval = get_visits(WR) > 0.0 ? get_raw_eval(color) : get_net_eval(color);
@@ -361,6 +360,8 @@ std::pair<UCTNode*, float> UCTNode::uct_select_child(int color, bool is_root) {
             if (to_expand) { break; }
         }
     }
+
+    // if (is_root) { myprintf("%f, %f\n", parentvisits, best_value); }//
 
     //assert(best != nullptr);
     if (best == nullptr) return std::make_pair(nullptr, 1.0f);

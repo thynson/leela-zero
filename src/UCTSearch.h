@@ -112,6 +112,8 @@ public:
     std::mutex m_return_mutex;
     std::deque<UCTNode*> m_return_queue;
 
+    std::string m_debug_string = "";
+
 private:
     static float get_min_psa_ratio();
     void dump_stats(FastState& state, UCTNode& parent);

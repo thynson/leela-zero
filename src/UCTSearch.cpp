@@ -294,7 +294,27 @@ bool UCTSearch::multiplicity_increment(UCTNode* node) {
     std::lock_guard<std::mutex> lk(m_mutex);
     auto iter = m_backup_cache.find(node);
     if (iter != m_backup_cache.end()) {
-        max_mult = std::max(max_mult, ++(iter->second.multiplicity));
+        
+        if (++(iter->second.multiplicity) > max_mult) {
+            max_mult = iter->second.multiplicity;
+            /*
+            auto& state = iter->second.state;
+            m_debug_string += std::to_string(max_mult);
+            for (auto nodefactor : iter->second.path) {
+                m_debug_string += state->move_to_text(nodefactor.node->get_move());
+            }
+            m_debug_string += "\n";
+            
+            //auto& state = iter->second.state;
+            myprintf("%5d ", max_mult);
+            for (auto nodefactor : iter->second.path) {
+                myprintf("%s ", state->move_to_text(nodefactor.node->get_move()));
+            }
+            myprintf("\n");
+            */
+        }
+        
+        //max_mult = std::max(max_mult, ++(iter->second.multiplicity));
         max_pending_w_mult = std::max(max_pending_w_mult, ++m_size_w_mult);
         return true;
     }
@@ -331,6 +351,8 @@ void UCTSearch::play_simulation(std::unique_ptr<GameState> currstate,
         auto child_factor = node->uct_select_child(color, node == m_root.get());
         // if node expanded then return node itself, then backup net_eval? if expanding then return nullptr ..
         auto new_node = child_factor.first;
+        ////if (node == m_root.get()) { m_debug_string += currstate->move_to_text(new_node->get_move()) + " \n"; } //
+        //   if (node == m_root.get()) { myprintf("%s\n", currstate->move_to_text(new_node->get_move()).c_str()); } //
         // !! new_node .. select_child return `this` or `nullptr`..
         if (new_node == nullptr) {
             m_failed_simulations++;
@@ -682,8 +704,8 @@ void UCTSearch::dump_analysis(int playouts) {
 
     std::string pvstring = get_pv(tempstate, *m_root);
     float winrate = 100.0f * m_root->get_raw_eval(color);
-    myprintf("Playouts: %d, Positions: %d, Win: %5.2f%%, PV: %s\n",
-             playouts, m_positions.load(), winrate, pvstring.c_str());
+    myprintf("Playouts: %d, Positions: %d, Visits: %d, Win: %5.2f%%, PV: %s\n",
+             playouts, m_positions.load(), int(m_root->get_visits()), winrate, pvstring.c_str());
 }
 
 bool UCTSearch::is_running() const {
@@ -897,6 +919,7 @@ int UCTSearch::think(int color, passflag_t passflag) {
         myprintf("max pending backups: %zu\n", max_pending_backups);
         myprintf("max pending with multiplicities: %d\n", max_pending_w_mult);
         myprintf("max multiplicity: %d\n", max_mult);
+        //myprintf("%s", m_debug_string.c_str());
 #ifdef USE_OPENCL
 #ifndef NDEBUG
         myprintf("batch stats: %d %d\n", batch_stats[0].load(), batch_stats[1].load());
