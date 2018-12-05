@@ -726,10 +726,11 @@ std::pair<Netresult_ptr, int> Network::probe_cache0(const GameState* const state
 */
 
 void Network::get_output0(
-    BackupData& bd,
+    BackupData& bd0,
     const Ensemble ensemble,
     int symmetry, const bool skip_cache) {
 
+    auto& bd = m_search->backupdata_insert(bd0);
     if (bd.state->board.get_boardsize() != BOARD_SIZE) {
         //return result_sym;
     }
@@ -764,14 +765,12 @@ void Network::get_output0(
     lock.unlock();
 
     if (ready) {
-        m_search->backup(bd);
+        m_search->backup(bd.path.back().node);
         return;
     }
     if (!first_visit) {
-        m_search->backupdata_insert(bd);
         return;
     }
-    auto tomove = bd.state->get_to_move();
     if (ensemble == DIRECT) {
         assert(symmetry >= 0 && symmetry < NUM_SYMMETRIES);
     }
@@ -807,10 +806,8 @@ void Network::get_output0(
         }
 #endif
     }
-    auto features = std::make_unique<const std::vector<float>>(gather_features(&*bd.state, symmetry));
-    auto result = bd.netresult;
-    m_search->backupdata_insert(bd);
-    m_forward->forward0(std::move(features), tomove, symmetry, result);
+    m_forward->forward0(std::make_unique<const std::vector<float>>(gather_features(&*bd.state, symmetry)), 
+        bd.state->get_to_move(), symmetry, bd.netresult);
 }
 
 Network::Netresult Network::get_output(

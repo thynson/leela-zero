@@ -105,7 +105,7 @@ public:
     int max_mult;
     void backup(UCTNode* node);
     void backup(BackupData& bd);
-    void backupdata_insert(BackupData& bd);
+    BackupData& backupdata_insert(BackupData& bd);
     bool multiplicity_increment(UCTNode* node);
     void backup();
 

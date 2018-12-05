@@ -282,12 +282,13 @@ void UCTSearch::backup() {
     }
 }
 
-void UCTSearch::backupdata_insert(BackupData& bd) {
+BackupData& UCTSearch::backupdata_insert(BackupData& bd) {
     auto node = bd.path.back().node;
     std::lock_guard<std::mutex> lk(m_mutex);
-    m_backup_cache.emplace(node, std::move(bd));
+    auto v = m_backup_cache.emplace(node, std::move(bd));
     max_pending_backups = std::max(max_pending_backups, m_backup_cache.size());
     max_pending_w_mult = std::max(max_pending_w_mult, ++m_size_w_mult);
+    return v.first->second;
 }
 
 bool UCTSearch::multiplicity_increment(UCTNode* node) {

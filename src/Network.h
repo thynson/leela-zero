@@ -69,7 +69,7 @@ public:
         const int symmetry = -1,
         const bool skip_cache = false,
         const bool force_selfcheck = false);
-    void get_output0(BackupData& bd,
+    void get_output0(BackupData& bd0,
         const Ensemble ensemble,
         int symmetry = -1,
         const bool skip_cache = false);
