@@ -31,7 +31,7 @@ const size_t NNCache::ENTRY_SIZE;
 
 NNCache::NNCache(int size) : m_size(size) {}
 
-std::shared_ptr<NNCache::Entry> NNCache::lookup_and_insert(std::uint64_t hash, bool insert, bool lookup, UCTNode* node) {
+std::shared_ptr<NNCache::Entry> NNCache::lookup_and_insert(std::uint64_t hash, bool insert, bool lookup, BackupData& bd) {
     // !lookup implies insert
 
     if (lookup) {
@@ -41,7 +41,7 @@ std::shared_ptr<NNCache::Entry> NNCache::lookup_and_insert(std::uint64_t hash, b
             ++m_hits;
             auto result = iter->second;
             if (!result->ready) {
-                result->backup_obligations.emplace_back(node);
+                result->backup_obligations.emplace_back(std::move(bd));
             }
             return result;
         }
@@ -55,7 +55,7 @@ std::shared_ptr<NNCache::Entry> NNCache::lookup_and_insert(std::uint64_t hash, b
             m_order.pop_front();
         }
         auto result = std::make_shared<Entry>();
-        result->backup_obligations.emplace_back(node);
+        result->backup_obligations.emplace_back(std::move(bd));
         m_cache.emplace(hash, result);
         m_order.push_back(hash);
         ++m_inserts;

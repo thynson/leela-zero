@@ -89,7 +89,7 @@ static void calculate_thread_count_gpu(boost::program_options::variables_map & v
         cfg_num_threads = num_threads;
     }
     if (vm.count("batchsize")) {
-        cfg_batch_size = vm["batchsize"].as<int>();
+        cfg_batch_size = vm["batchsize"].as<std::vector<int>>();
     }
 }
 #endif
@@ -133,11 +133,12 @@ static void parse_commandline(int argc, char *argv[]) {
 #ifdef USE_OPENCL
     po::options_description gpu_desc("GPU options");
     gpu_desc.add_options()
-        ("gpu",  po::value<std::vector<int> >(),
+        ("gpu",  po::value<std::vector<int>>(),
                 "ID of the OpenCL device(s) to use (disables autodetection).")
+        ("worker", po::value<std::vector<int>>(), "")
         ("full-tuner", "Try harder to find an optimal OpenCL tuning.")
         ("tune-only", "Tune OpenCL only and then exit.")
-        ("batchsize", po::value<int>(), "Max batch size. Default is the number of threads divided by the number of GPUs")
+        ("batchsize", po::value<std::vector<int>>(), "Max batch size. Default is the number of threads divided by the number of GPUs")
 #ifdef USE_HALF
         ("precision", po::value<std::string>(),
             "Floating-point precision (single/half/auto).\n"
@@ -272,7 +273,11 @@ static void parse_commandline(int argc, char *argv[]) {
 
 #ifdef USE_OPENCL
     if (vm.count("gpu")) {
-        cfg_gpus = vm["gpu"].as<std::vector<int> >();
+        cfg_gpus = vm["gpu"].as<std::vector<int>>();
+    }
+
+    if (vm.count("worker")) {
+        cfg_workers = vm["worker"].as<std::vector<int>>();
     }
 
     if (vm.count("full-tuner")) {

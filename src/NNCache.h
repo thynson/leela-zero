@@ -29,7 +29,7 @@
 #include <unordered_map>
 #include <vector>
 
-class UCTNode;
+struct BackupData;
 class NNCache {
 public:
 
@@ -78,7 +78,7 @@ public:
         //    : result(r) {}
         bool ready{false};
         Netresult result;  // ~ 1.4KiB
-        std::vector<UCTNode*> backup_obligations;
+        std::vector<BackupData> backup_obligations;
     };
 
     static constexpr size_t ENTRY_SIZE =
@@ -86,7 +86,7 @@ public:
         + sizeof(std::uint64_t)
         + sizeof(std::shared_ptr<Entry>);
 
-    std::shared_ptr<Entry> lookup_and_insert(std::uint64_t hash, bool insert, bool lookup, UCTNode* node);
+    std::shared_ptr<Entry> lookup_and_insert(std::uint64_t hash, bool insert, bool lookup, BackupData& bd);
     std::mutex m_mutex;
 private:
     

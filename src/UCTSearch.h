@@ -47,10 +47,9 @@ struct BackupData {
     };
     float eval{ -1.0f };
     std::vector<NodeFactor> path;
-    Netresult_ptr netresult;
     int symmetry;
     std::unique_ptr<GameState> state;
-    int multiplicity{1};
+    //int multiplicity{1};
 };
 
 class UCTSearch {
@@ -96,26 +95,21 @@ public:
     std::atomic<int> m_positions{0};
     std::atomic<bool> m_run{false};
     std::condition_variable m_cv;
-
-    std::mutex m_mutex;
-    int m_size_w_mult; // with multiplicity
-    std::unordered_map<UCTNode*, BackupData> m_backup_cache;
-    std::size_t max_pending_backups;
-    int max_pending_w_mult;
-    int max_mult;
-    void backup(UCTNode* node);
-    void backup(BackupData& bd);
-    BackupData& backupdata_insert(BackupData& bd);
-    bool multiplicity_increment(UCTNode* node);
-    void backup();
-
-    std::mutex m_return_mutex;
-    std::deque<UCTNode*> m_return_queue;
+    
+#ifdef ACCUM_DEBUG
+    std::atomic<int> failed_simulations{0};
+    std::atomic<uint32_t> max_leaf_vl;
+    std::atomic<uint32_t> max_vl;
+    std::atomic<int> pending_backups;
+    std::atomic<int> max_pending_backups;
+    std::atomic<int> pending_w_mult;
+    std::atomic<int> max_pending_w_mult;
 
     std::string m_debug_string = "";
+#endif
+    void backup(BackupData& bd, Netresult_ptr netresult);
 
 private:
-    static float get_min_psa_ratio();
     void dump_stats(FastState& state, UCTNode& parent);
     void tree_stats(const UCTNode& node);
     std::string get_pv(FastState& state, UCTNode& parent);
@@ -134,7 +128,6 @@ private:
     GameState & m_rootstate;
     std::unique_ptr<GameState> m_last_rootstate;
     std::unique_ptr<UCTNode> m_root;
-    std::atomic<int> m_nodes{0};
     std::atomic<int> m_playouts;
     int m_maxplayouts;
     int m_maxvisits;
@@ -143,8 +136,8 @@ private:
 
     Network & m_network;
 
-    void failed_simulation(BackupData& bd);
-    std::atomic<int> m_failed_simulations{0};
+    void backup(BackupData& bd, uint32_t vl);
+    void failed_simulation(BackupData& bd, uint32_t vl, bool incr = false);
 };
 
 class UCTWorker {

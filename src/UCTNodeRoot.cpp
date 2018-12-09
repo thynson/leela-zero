@@ -92,20 +92,22 @@ void UCTNode::dirichlet_noise(float epsilon, float alpha) {
         v /= sample_sum;
     }
 
-    std::vector<UCTNode*> m_children_ptrs;
+    //std::vector<UCTNode*> m_children_ptrs;
     child_cnt = 0;
     for (auto& child : m_children) {
         auto policy = child->get_policy();
         auto eta_a = dirichlet_vector[child_cnt++];
         policy = policy * (1 - epsilon) + epsilon * eta_a;
         child->set_policy(policy);
-        m_children_ptrs.emplace_back(child.get());
+        //m_children_ptrs.emplace_back(child.get());
     }
+    sort_children(FastBoard::BLACK);
+    /*
     std::stable_sort(rbegin(m_children_ptrs), rend(m_children_ptrs), 
         [](UCTNode* a, UCTNode* b) { return a->get_policy() < b->get_policy(); });
     for (auto i = 0; i < m_children.size(); i++) {
         m_children[i].from_ptr(m_children_ptrs[i]);
-    }
+    }*/
 }
 
 void UCTNode::randomize_first_proportionally() {
@@ -184,11 +186,10 @@ void UCTNode::inflate_all_children() {
     }
 }
 
-void UCTNode::prepare_root_node(Network & network, int color,
-                                std::atomic<int>& nodes,
-                                GameState& root_state) {
-    float root_eval = get_eval(color);
-    Utils::myprintf("root eval=%f\n", root_eval);
+void UCTNode::prepare_root_node(GameState& root_state) {
+
+    Utils::myprintf("root eval=%f\n", get_raw_eval(root_state.get_to_move()));
+    // get_best_child etc. can't work before this? should forbid them from acquiring reader ?
 
     // There are a lot of special cases where code assumes
     // all children of the root are inflated, so do that.
@@ -198,7 +199,7 @@ void UCTNode::prepare_root_node(Network & network, int color,
     // This also removes a lot of special cases.
     kill_superkos(root_state);
 
-    if (cfg_noise) {
+    if (cfg_noise) { // need writer privilege..
         // Adjust the Dirichlet noise's alpha constant to the board size
         auto alpha = 0.03f * 361.0f / NUM_INTERSECTIONS;
         dirichlet_noise(0.25f, alpha);

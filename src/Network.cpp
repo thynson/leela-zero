@@ -726,16 +726,15 @@ std::pair<Netresult_ptr, int> Network::probe_cache0(const GameState* const state
 */
 
 void Network::get_output0(
-    BackupData& bd0,
+    BackupData& bd,
     const Ensemble ensemble,
     int symmetry, const bool skip_cache) {
 
-    auto& bd = m_search->backupdata_insert(bd0);
     if (bd.state->board.get_boardsize() != BOARD_SIZE) {
         //return result_sym;
     }
 
-    bool found = false;
+    Netresult_ptr result;
     std::unique_lock<std::mutex> lock(m_nncache.m_mutex);
     if (!skip_cache) {
         // If we are not generating a self-play game, try to find
@@ -746,26 +745,24 @@ void Network::get_output0(
             // See if we already have this in the cache.
             for (auto sym = 0; sym < Network::NUM_SYMMETRIES; ++sym) {
                 const auto hash = bd.state->get_symmetry_hash(sym);
-                auto result = m_nncache.lookup_and_insert(hash, false, true, bd.path.back().node);
+                bd.symmetry = sym;
+                result = m_nncache.lookup_and_insert(hash, false, true, bd);
                 if (result) {
-                    bd.netresult = result;
-                    bd.symmetry = sym;
-                    found = true;
                     break;
                 }
             }
         }
     }
-    if (!found) {
+    if (!result) {
         bd.symmetry = Network::IDENTITY_SYMMETRY; // = 0
-        bd.netresult = m_nncache.lookup_and_insert(bd.state->board.get_hash(), true, !skip_cache, bd.path.back().node);
+        result = m_nncache.lookup_and_insert(bd.state->board.get_hash(), true, !skip_cache, bd);
     }
-    bool ready = bd.netresult->ready;
-    bool first_visit = (bd.netresult->backup_obligations.size() == 1);
+    bool ready = result->ready;
+    bool first_visit = (result->backup_obligations.size() == 1);
     lock.unlock();
 
     if (ready) {
-        m_search->backup(bd.path.back().node);
+        m_search->backup(bd, result);
         return;
     }
     if (!first_visit) {
@@ -806,8 +803,10 @@ void Network::get_output0(
         }
 #endif
     }
-    m_forward->forward0(std::make_unique<const std::vector<float>>(gather_features(&*bd.state, symmetry)), 
-        bd.state->get_to_move(), symmetry, bd.netresult);
+    auto& state = result->backup_obligations[0].state;
+    auto tomove = state->get_to_move();
+    m_forward->forward0(std::make_unique<const std::vector<float>>(gather_features(&*state, symmetry)),
+        tomove, symmetry, result);
 }
 
 Network::Netresult Network::get_output(
@@ -927,8 +926,8 @@ void Network::process_output(
     */
     auto obligations = std::move(result->backup_obligations);
     lk.unlock();
-    for (auto node : obligations) {
-        m_search->backup(node);
+    for (auto& bd : obligations) {
+        m_search->backup(bd, result);
     }
 }
 

@@ -25,6 +25,8 @@
 
 #include "UCTNode.h"
 
+std::atomic<size_t> UCTNodePointer::m_nodes = {0};
+std::atomic<size_t> UCTNodePointer::m_inflated_nodes = {0};
 std::atomic<size_t> UCTNodePointer::m_tree_size = {0};
 
 size_t UCTNodePointer::get_tree_size() {
@@ -46,7 +48,9 @@ UCTNodePointer::~UCTNodePointer() {
     if (is_inflated(v)) {
         delete read_ptr(v);
         sz += sizeof(UCTNode);
+        --m_inflated_nodes;
     }
+    --m_nodes;
     decrement_tree_size(sz);
 }
 
@@ -58,6 +62,7 @@ UCTNodePointer::UCTNodePointer(UCTNodePointer&& n) {
 #else
     assert(v == INVALID);
 #endif
+    ++m_nodes;
     increment_tree_size(sizeof(UCTNodePointer));
 }
 
@@ -68,6 +73,7 @@ UCTNodePointer::UCTNodePointer(std::int16_t vertex, float policy) {
 
     m_data =  (static_cast<std::uint64_t>(i_policy)  << 32)
             | (static_cast<std::uint64_t>(i_vertex) << 16);
+    ++m_nodes;
     increment_tree_size(sizeof(UCTNodePointer));
 }
 
@@ -77,6 +83,7 @@ UCTNodePointer& UCTNodePointer::operator=(UCTNodePointer&& n) {
 
     if (is_inflated(v)) {
         decrement_tree_size(sizeof(UCTNode));
+        --m_inflated_nodes;
         delete read_ptr(v);
     }
     return *this;
@@ -85,6 +92,7 @@ UCTNodePointer& UCTNodePointer::operator=(UCTNodePointer&& n) {
 UCTNode * UCTNodePointer::release() {
     auto v = std::atomic_exchange(&m_data, INVALID);
     decrement_tree_size(sizeof(UCTNode));
+    --m_inflated_nodes;
     return read_ptr(v);
 }
 
@@ -99,6 +107,7 @@ void UCTNodePointer::inflate() const {
         bool success = m_data.compare_exchange_strong(v, v2);
         if (success) {
             increment_tree_size(sizeof(UCTNode));
+            ++m_inflated_nodes;
             return;
         } else {
             // this means that somebody else also modified this instance.

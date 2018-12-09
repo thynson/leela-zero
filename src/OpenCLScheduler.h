@@ -28,7 +28,6 @@
 #include "ForwardPipe.h"
 #include "OpenCL.h"
 #include "ThreadPool.h"
-extern int cfg_batch_size;
 
 template <typename net_t>
 class OpenCLScheduler : public ForwardPipe {
@@ -96,7 +95,7 @@ private:
 
     std::list<std::shared_ptr<ForwardQueueEntry>> m_forward_queue;
     std::list<std::unique_ptr<ForwardQueueEntry0>> m_forward_queue0;
-    std::atomic<int> m_max_queue_size;
+    std::atomic<int> m_max_queue_size{0};
 
     std::list<std::thread> m_worker_threads;
     std::vector<std::atomic<int>*> batch_stats;

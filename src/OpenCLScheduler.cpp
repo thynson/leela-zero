@@ -102,24 +102,53 @@ template <typename net_t>
 void OpenCLScheduler<net_t>::initialize(const int channels) {
     // Launch the worker threads.  Minimum 1 worker per GPU, but use enough threads
     // so that we can at least concurrently schedule something to the GPU.
-    auto num_worker_threads = 2; // cfg_num_threads / cfg_batch_size / (m_opencl.size() + 1) + 1;
-    m_max_queue_size = cfg_batch_size * m_opencl.size() * num_worker_threads;// +cfg_batch_size - cfg_num_threads + 0;
-    myprintf("max queue size: %d\n", m_max_queue_size.load());
-    // num_worker_threads + 1 ... more worker threads don't help? GPU deal with two forward passes in parallel?
-    for (auto i = 0; i < cfg_batch_size; i++) {
+
+    // number of worker threads
+    if (cfg_workers.empty()) { 
+        cfg_workers.assign(m_opencl.size(), 2); 
+    }
+    else {
+        while (cfg_workers.size() < m_opencl.size()) {
+            cfg_workers.push_back(cfg_workers.back());
+        }
+    }
+    // auto num_worker_threads = 2; // cfg_num_threads / cfg_batch_size / (m_opencl.size() + 1) + 1;
+
+    // batch sizes
+    if (cfg_batch_size.empty()) {
+        cfg_batch_size.assign(m_opencl.size(), 1);
+    }
+    else {
+        while (cfg_batch_size.size() < m_opencl.size()) {
+            cfg_batch_size.push_back(cfg_batch_size.back());
+        }
+    }
+
+    // !! need rework..
+    for (auto i = 0; i < cfg_batch_size[0]; i++) {
         batch_stats.emplace_back(new std::atomic<int>(0));
         pickup_stats.emplace_back(new std::atomic<int>(0));
     }
-    auto gnum = 0;
-    for (auto & opencl : m_opencl) {
-        opencl->initialize(channels, cfg_batch_size);
 
-        for (auto i = unsigned{0}; i < num_worker_threads; i++) {
+    //printf("%d, %d\n", cfg_batch_size.size(), cfg_batch_size[0]);
+    //printf("%d, %d\n", cfg_workers.size(), cfg_workers[0]);
+    auto gnum = 0;
+
+    // m_max_queue_size = cfg_batch_size * m_opencl.size() * num_worker_threads;// +cfg_batch_size - cfg_num_threads + 0;
+    // num_worker_threads + 1 ... more worker threads don't help? GPU deal with two forward passes in parallel?
+
+    for (auto & opencl : m_opencl) {
+        opencl->initialize(channels, cfg_batch_size[gnum]);
+        m_max_queue_size += cfg_batch_size[gnum] * cfg_workers[gnum];
+
+        for (auto i = unsigned{0}; i < cfg_workers[gnum]; i++) {
             auto t = std::thread(&OpenCLScheduler<net_t>::batch_worker, this, gnum, i);
             m_worker_threads.push_back(std::move(t));
         }
         gnum++;
     }
+
+    printf("max queue size: %d\n", m_max_queue_size.load());
 
     // Exit immediately after tuning.  We should exit here because we skipped
     // initializing rest of the kernels due to some NVIDIA drivers crashing.
@@ -318,16 +347,16 @@ void OpenCLScheduler<net_t>::batch_worker(const size_t gnum, const size_t i) {
 
     OpenCLContext context;
 
-    auto batch_input = std::vector<net_t>(in_size * cfg_batch_size);
-    auto batch_output_pol = std::vector<float>(out_pol_size * cfg_batch_size);
-    auto batch_output_val = std::vector<float>(out_val_size * cfg_batch_size);
+    auto batch_input = std::vector<net_t>(in_size * cfg_batch_size[gnum]);
+    auto batch_output_pol = std::vector<float>(out_pol_size * cfg_batch_size[gnum]);
+    auto batch_output_val = std::vector<float>(out_val_size * cfg_batch_size[gnum]);
 
     auto pickup_task = [this, gnum, in_size, i](std::vector<net_t>&batch_in) {
         std::vector<std::unique_ptr<ForwardQueueEntry0>> inputs;
-        inputs.reserve(cfg_batch_size);
+        inputs.reserve(cfg_batch_size[gnum]);
         auto it = begin(inputs);
         int count = 0;
-        int remaining = cfg_batch_size;
+        int remaining = cfg_batch_size[gnum];
 
         std::unique_lock<std::mutex> lk(m_mutex, std::defer_lock);
         while (remaining) {
@@ -397,7 +426,24 @@ void OpenCLScheduler<net_t>::batch_worker(const size_t gnum, const size_t i) {
             m_networks[gnum]->forward(
                 batch_input, batch_output_pol, batch_output_val, context, m_cv, count);
         }
-
+        //std::unique_lock<std::mutex> lk(m_mutex);
+        //m_cv.notify_all();
+        //lk.unlock();
+        {
+            auto t = std::thread([=](std::vector<std::unique_ptr<ForwardQueueEntry0>> inputs_) {
+                auto index = 0;
+                for (auto it = begin(inputs_); it != end(inputs_); ++it) {
+                    std::vector<float> out_p(begin(batch_output_pol) + out_pol_size * index,
+                        begin(batch_output_pol) + out_pol_size * (index + 1));
+                    std::vector<float> out_v(begin(batch_output_val) + out_val_size * index,
+                        begin(batch_output_val) + out_val_size * (index + 1));
+                    index++;
+                    m_network->process_output(out_p, out_v, (*it)->tomove, (*it)->symmetry, (*it)->result);
+                }
+            }, std::move(inputs));
+            t.detach();
+        }
+        /*
         {
             std::vector<std::thread> backup_threads;
             auto index = 0;
@@ -416,17 +462,21 @@ void OpenCLScheduler<net_t>::batch_worker(const size_t gnum, const size_t i) {
                     (*it)->tomove, (*it)->symmetry, (*it)->result);
                 t.detach(); // can't control any more, but no harm even after !m_run, since won't be able to back up anything.
                 
-                /*backup_threads.emplace_back(std::thread([=](std::vector<float>& p, std::vector<float>& v) { 
-                    m_network->process_output(p, v,
-                    (*it)->tomove, (*it)->symmetry, (*it)->result); }, out_p, out_v));*/
+                //backup_threads.emplace_back(std::thread([=](std::vector<float>& p, std::vector<float>& v) { 
+                  //  m_network->process_output(p, v,
+                    //(*it)->tomove, (*it)->symmetry, (*it)->result); }, out_p, out_v));
+                    
                 //m_network->process_output(out_p, out_v, (*it)->tomove, (*it)->symmetry, (*it)->result);
             }
             for (auto iter = backup_threads.begin(); iter != backup_threads.end(); iter++) {
             //    iter->join();
             }
         }
-        m_max_queue_size += cfg_batch_size;
+        */
+        //myprintf("%d ", m_max_queue_size.load());
+        m_max_queue_size += cfg_batch_size[gnum];
         //myprintf("max queue size: %d - worker %d\n", m_max_queue_size.load(), i);
+        //lk.lock();
         m_cv0.notify_all();
         //m_search->backup();
         //m_search->m_cv.notify_all();

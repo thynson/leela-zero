@@ -309,6 +309,7 @@ void OpenCL_Network<net_t>::forward(const std::vector<net_t>& input,
      enqueue_lock.unlock();
     
     if (--m_occupied == 0) idle_count++; 
+    //probably should first acquire lock to the gpu queue's mutex..
     cv.notify_all();
 
     auto polptr = static_cast<net_t*>(pinnedOutBufferHost_pol);

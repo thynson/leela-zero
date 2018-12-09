@@ -37,7 +37,8 @@ public:
     // When we visit a node, add this amount of virtual losses
     // to it to encourage other CPUs to explore other parts of the
     // search tree.
-    static constexpr auto VIRTUAL_LOSS_COUNT = 3;
+    static constexpr auto VIRTUAL_LOSS_COUNT = 3.0;
+    std::atomic<std::uint32_t> m_virtual_loss{0};
     // Defined in UCTNode.cpp
     explicit UCTNode(int vertex, float policy);
     UCTNode() = delete;
@@ -45,7 +46,6 @@ public:
 
     void create_children(Network::Netresult& raw_netlist,
                           int symmetry,
-                          std::atomic<int>& nodecount,
                           GameState& state,
                           float min_psa_ratio = 0.0f);
 
@@ -54,7 +54,7 @@ public:
     UCTNode& get_best_root_child(int color, bool running = false);
     std::pair<UCTNode*, float> uct_select_child(int color, bool is_root);
 
-    size_t count_nodes_and_clear_expand_state();
+    //size_t count_nodes_and_clear_expand_state();
     bool first_visit() const;
     bool has_children() const;
     bool expandable(const float min_psa_ratio = 0.0f) const;
@@ -67,31 +67,46 @@ public:
     float get_policy() const;
     void set_policy(float policy);
     float get_eval(int tomove) const;
-    float get_raw_eval(int tomove, int virtual_loss = 0) const;
+    float get_raw_eval(int tomove, double virtual_loss = 0) const;
     float get_net_eval(int tomove) const;
-    void virtual_loss();
-    void virtual_loss_undo(int multiplicity = 1);
-    void update(float eval, int multiplicity, float factor = 1.0f, float sel_factor = 1.0f);
+    void virtual_loss(uint32_t vl = 1);
+    void virtual_loss_undo(uint32_t vl = 1);
+    void update(float eval, uint32_t vl, float factor = 1.0f, float sel_factor = 1.0f);
 
     // Defined in UCTNodeRoot.cpp, only to be called on m_root in UCTSearch
     void randomize_first_proportionally();
-    void prepare_root_node(Network & network, int color,
-                           std::atomic<int>& nodecount,
-                           GameState& state);
+    void prepare_root_node(GameState& state);
 
     UCTNode* get_first_child() const;
     UCTNode* get_nopass_child(FastState& state) const;
     std::unique_ptr<UCTNode> find_child(const int move);
     void inflate_all_children();
 
+    static float get_min_psa_ratio();
+
+    enum Action : char {
+        READ,
+        WRITE,
+        FAIL,
+        BACKUP
+    };
+
+    void acquire_reader();
+    void release_reader(uint32_t vl, bool incr = false);
+    bool pre_acquire_writer();
+    void acquire_writer();
+    void release_writer();
+    Action get_action(bool is_root);
+    std::atomic<std::uint8_t> m_lock{0}; // readers-writer lock
+
 private:
+
     enum Status : char {
         INVALID, // superko
         PRUNED,
         ACTIVE
     };
-    void link_nodelist(std::atomic<int>& nodecount,
-                       std::vector<Network::PolicyVertexPair>& nodelist,
+    void link_nodelist(std::vector<Network::PolicyVertexPair>& nodelist,
                        float min_psa_ratio);
     double get_blackevals() const;
     void accumulate_eval(float eval);
@@ -105,9 +120,8 @@ private:
     // Move
     std::int16_t m_move;
     // UCT
-    std::atomic<std::int16_t> m_virtual_loss{0};
     std::atomic<double> m_visits{0.0};
-    std::atomic<double> m_sel_visits{0.0};
+    // std::atomic<double> m_sel_visits{0.0};
     // UCT eval
     float m_policy;
     // Original net eval for this node (not children).
@@ -115,40 +129,10 @@ private:
     std::atomic<double> m_blackevals{0.0};
     std::atomic<Status> m_status{ACTIVE};
 
-    // m_expand_state acts as the lock for m_children.
-    // see manipulation methods below for possible state transition
-    enum class ExpandState : std::uint8_t {
-        // initial state, no children
-        INITIAL = 0,
-
-        // creating children.  the thread that changed the node's state to
-        // EXPANDING is responsible of finishing the expansion and then
-        // move to EXPANDED, or revert to INITIAL if impossible
-        EXPANDING,
-
-        // expansion done.  m_children cannot be modified on a multi-thread
-        // context, until node is destroyed.
-        EXPANDED,
-    };
-    std::atomic<ExpandState> m_expand_state{ExpandState::INITIAL};
 
     // Tree data
     std::atomic<float> m_min_psa_ratio_children{2.0f};
     std::vector<UCTNodePointer> m_children;
-public:
-    //  m_expand_state manipulation methods
-    // INITIAL -> EXPANDING
-    // Return false if current state is not INITIAL
-    bool acquire_expanding();
-
-    // EXPANDING -> EXPANDED
-    void expand_done();
-
-    // EXPANDING -> INITIAL
-    void expand_cancel();
-
-    // wait until we are on EXPANDED state
-    void wait_expanded();
 };
 
 #endif

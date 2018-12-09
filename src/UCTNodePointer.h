@@ -89,6 +89,8 @@ private:
     }
 
 public:
+    static std::atomic<size_t> m_nodes;
+    static std::atomic<size_t> m_inflated_nodes;
     static size_t get_tree_size();
 
     ~UCTNodePointer();

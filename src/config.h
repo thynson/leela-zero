@@ -19,6 +19,8 @@
 #ifndef CONFIG_H_INCLUDED
 #define CONFIG_H_INCLUDED
 
+#define ACCUM_DEBUG
+//#define LOCK_DEBUG
 /*
  * We need to check for input while we are thinking.
  * That code isn't portable, so select something appropriate for the system.

@@ -168,16 +168,13 @@ void UCTSearch::update_root() {
     // So reset this count now.
     m_playouts = 0;
     m_positions = 0;
-    m_failed_simulations = 0;
+#ifdef ACCUM_DEBUG
+    failed_simulations = 0;
     max_pending_backups = 0;
     max_pending_w_mult = 0;
-    max_mult = 0;
-
-    std::unique_lock<std::mutex> lk(m_mutex);
-    myprintf("Cleared: %d backup cache entries\n", m_backup_cache.size());
-    m_backup_cache.clear();
-    m_size_w_mult = 0;
-    lk.unlock();
+    max_vl = 0;
+    max_leaf_vl = 0;
+#endif
 
 #ifndef NDEBUG
     auto start_nodes = m_root->count_nodes_and_clear_expand_state();
@@ -190,7 +187,7 @@ void UCTSearch::update_root() {
     m_last_rootstate.reset(nullptr);
 
     // Check how big our search tree (reused or new) is.
-    m_nodes = m_root->count_nodes_and_clear_expand_state();
+    // m_nodes = m_root->count_nodes_and_clear_expand_state();
 
 #ifndef NDEBUG
     if (m_nodes > 0) {
@@ -200,55 +197,57 @@ void UCTSearch::update_root() {
 #endif
 }
 
-float UCTSearch::get_min_psa_ratio() {
-    const auto mem_full = UCTNodePointer::get_tree_size() / static_cast<float>(cfg_max_tree_size);
-    // If we are halfway through our memory budget, start trimming
-    // moves with very low policy priors.
-    if (mem_full > 0.5f) {
-        // Memory is almost exhausted, trim more aggressively.
-        if (mem_full > 0.95f) {
-            // if completely full just stop expansion by returning an impossible number
-            if (mem_full >= 1.0f) {
-                return 2.0f;
-            }
-            return 0.01f;
-        }
-        return 0.001f;
-    }
-    return 0.0f;
-}
 
-void UCTSearch::backup(BackupData& bd) {
-    auto path = bd.path;
+void UCTSearch::backup(BackupData& bd, Netresult_ptr netresult) {
+    auto& path = bd.path;
     auto node = path.back().node;
-    auto had_children = node->has_children();
-    auto min_psa_ratio = bd.path.size() == 1 ? 0.0 : get_min_psa_ratio();
-    m_playouts++;
-    node->create_children(bd.netresult->result, bd.symmetry, m_nodes, *bd.state, min_psa_ratio);
-    bd.path.back().node->expand_done();
-    m_cv.notify_one();
-    if (!had_children) {
-        auto eval = bd.netresult->result.winrate;
+    auto is_root = bd.path.size() == 1;
+    auto min_psa_ratio = is_root ? 0.0 : UCTNode::get_min_psa_ratio();
+    
+    node->acquire_writer();
+    auto vl = node->m_virtual_loss.load();
+    // writer is responsible for removing all virtual losses injected by concurrent readers
+    node->create_children(netresult->result, bd.symmetry, *bd.state, min_psa_ratio);
+    if (node->get_visits() == 0.0) {
+        auto eval = netresult->result.winrate;
         bd.eval = (bd.state->get_to_move() == FastBoard::BLACK ? eval : 1.0f - eval);
-
-        auto factor = 1.0f;
-        for (auto nf = path.rbegin(); nf != path.rend(); ++nf) {
-            auto sel_factor = factor * nf->factor;
-            nf->node->update(bd.eval, bd.multiplicity, factor, sel_factor);
-            factor = sel_factor;
-        }
+        backup(bd, vl);
     }
     else {
-        failed_simulation(bd);
+        failed_simulation(bd, vl);
+    }
+    ++m_playouts;
+#ifdef ACCUM_DEBUG
+    max_leaf_vl = std::max(max_leaf_vl.load(), vl);
+    --pending_backups;
+    pending_w_mult -= vl;
+#endif
+    if (is_root) { // the old prepare_root_node
+        node->prepare_root_node(*bd.state);
+        // create a sorted list of legal moves (make sure we
+        // play something legal and decent even in time trouble)
+    }
+    node->release_writer();
+}
+
+void UCTSearch::backup(BackupData& bd, uint32_t vl) {
+    auto& path = bd.path;
+    auto factor = 1.0f;
+    for (auto nf = path.rbegin(); nf != path.rend(); ++nf) {
+        auto sel_factor = factor * nf->factor;
+        nf->node->update(bd.eval, vl, factor, sel_factor);
+        factor = sel_factor;
     }
 }
 
-void UCTSearch::failed_simulation(BackupData& bd) {
-    auto path = bd.path;
+void UCTSearch::failed_simulation(BackupData& bd, uint32_t vl, bool incr) {
+    auto& path = bd.path;
     for (auto nf = path.rbegin(); nf != path.rend(); ++nf) {
-        nf->node->virtual_loss_undo(bd.multiplicity);
+        nf->node->release_reader(vl, incr);
     }
 }
+
+
 
 float eval_from_score(float board_score) {
     if (board_score > 0.0f) { return 1.0f; }
@@ -256,122 +255,82 @@ float eval_from_score(float board_score) {
     else { return 0.5f; }
 }
 
-void UCTSearch::backup(UCTNode* node) {
-    std::unique_lock<std::mutex> lk(m_mutex);
-    auto iter = m_backup_cache.find(node);
-    if (iter != m_backup_cache.end()) {
-        auto bd = std::move(iter->second);
-        m_backup_cache.erase(iter);
-        m_size_w_mult -= bd.multiplicity;
-        lk.unlock();
-        backup(bd);
-    }
-    else {
-        myprintf("Backup entry has been removed!\n"); //
-    }
-}
-
-void UCTSearch::backup() {
-    std::unique_lock<std::mutex> lk(m_return_mutex);
-    while (m_run && !m_return_queue.empty()) {
-        auto node = m_return_queue.front();
-        m_return_queue.pop_front();
-        lk.unlock();
-        backup(node);
-        lk.lock();
-    }
-}
-
-BackupData& UCTSearch::backupdata_insert(BackupData& bd) {
-    auto node = bd.path.back().node;
-    std::lock_guard<std::mutex> lk(m_mutex);
-    auto v = m_backup_cache.emplace(node, std::move(bd));
-    max_pending_backups = std::max(max_pending_backups, m_backup_cache.size());
-    max_pending_w_mult = std::max(max_pending_w_mult, ++m_size_w_mult);
-    return v.first->second;
-}
-
-bool UCTSearch::multiplicity_increment(UCTNode* node) {
-    std::lock_guard<std::mutex> lk(m_mutex);
-    auto iter = m_backup_cache.find(node);
-    if (iter != m_backup_cache.end()) {
-        
-        if (++(iter->second.multiplicity) > max_mult) {
-            max_mult = iter->second.multiplicity;
-            /*
-            auto& state = iter->second.state;
-            m_debug_string += std::to_string(max_mult);
-            for (auto nodefactor : iter->second.path) {
-                m_debug_string += state->move_to_text(nodefactor.node->get_move());
-            }
-            m_debug_string += "\n";
-            
-            //auto& state = iter->second.state;
-            myprintf("%5d ", max_mult);
-            for (auto nodefactor : iter->second.path) {
-                myprintf("%s ", state->move_to_text(nodefactor.node->get_move()));
-            }
-            myprintf("\n");
-            */
-        }
-        
-        //max_mult = std::max(max_mult, ++(iter->second.multiplicity));
-        max_pending_w_mult = std::max(max_pending_w_mult, ++m_size_w_mult);
-        return true;
-    }
-    else {
-        return false;
-    }
-}
-
 void UCTSearch::play_simulation(std::unique_ptr<GameState> currstate,
                                         UCTNode* node,
                                         int thread_num) {
     auto factor = 1.0f;
     BackupData bd;
+    bool is_root = true;
     while (true) {
-        node->virtual_loss();
         bd.path.emplace_back(node, factor);
-        const auto color = currstate->get_to_move();
 
         // end of game
         if (currstate->get_passes() >= 2) {
             bd.eval = eval_from_score(currstate->final_score());
-            backup(bd);
+            node->acquire_reader();
+            backup(bd, 1);
             return;
         }
+#ifdef ACCUM_DEBUG
+        max_vl = std::max(max_vl.load(), node->m_virtual_loss + 1);
+#endif
+        switch (node->get_action(is_root)) {
 
-        // expand a node
-        if (node->expandable() && node->acquire_expanding()) {
+        case UCTNode::WRITE: // expand the node
+#ifdef ACCUM_DEBUG
+            ++pending_backups;
+            ++pending_w_mult;
+            max_pending_backups = std::max(pending_backups.load(), max_pending_backups.load());
+            max_pending_w_mult = std::max(pending_w_mult.load(), max_pending_w_mult.load());
+#endif
             bd.state = std::move(currstate);
             m_network.get_output0(bd, Network::Ensemble::RANDOM_SYMMETRY);
             return;
+
+        case UCTNode::FAIL: // virtual loss accumulated, return
+#ifdef ACCUM_DEBUG
+            ++pending_w_mult;
+            max_pending_w_mult = std::max(pending_w_mult.load(), max_pending_w_mult.load());
+            ++failed_simulations;
+#endif
+            failed_simulation(bd, node->m_virtual_loss, true);
+            return;
+
+        case UCTNode::READ : // select a child 
+        {
+            auto child_factor = node->uct_select_child(currstate->get_to_move(), is_root);
+            auto new_node = child_factor.first;
+            factor = child_factor.second;
+            ////if (is_root) { m_debug_string += currstate->move_to_text(new_node->get_move()) + " \n"; } //
+            //   if (is_root) { myprintf("%s\n", currstate->move_to_text(new_node->get_move()).c_str()); } //
+            if (new_node != nullptr) {
+                node = new_node;
+                auto move = node->get_move();
+                currstate->play_move(move);
+                if (move != FastBoard::PASS && currstate->superko()) {
+                    node->invalidate();
+                    failed_simulation(bd, 1);
+                    return;
+                }
+                break;
+            }
+            else {
+                myprintf("All children are invalidated! ");
+#ifdef LOCK_DEBUG
+                myprintf("%d, %d, %d", node->get_children().size(), node->m_lock.load(), is_root);
+#endif
+                myprintf("\n");
+                // backup, instead of expand further..
+            }
         }
 
-        // select a child
-        auto child_factor = node->uct_select_child(color, node == m_root.get());
-        // if node expanded then return node itself, then backup net_eval? if expanding then return nullptr ..
-        auto new_node = child_factor.first;
-        ////if (node == m_root.get()) { m_debug_string += currstate->move_to_text(new_node->get_move()) + " \n"; } //
-        //   if (node == m_root.get()) { myprintf("%s\n", currstate->move_to_text(new_node->get_move()).c_str()); } //
-        // !! new_node .. select_child return `this` or `nullptr`..
-        if (new_node == nullptr) {
-            m_failed_simulations++;
-            //myprintf("failed! ");
-            if (!multiplicity_increment(node)) {
-                failed_simulation(bd);
-            }
+        case UCTNode::BACKUP :
+            bd.eval = node->get_net_eval(FastBoard::BLACK);
+            // print the sequence of moves from bd.path ...
+            backup(bd, 1);
             return;
         }
-        node = new_node;
-        factor = child_factor.second;
-        auto move = node->get_move();
-        currstate->play_move(move);
-        if (move != FastBoard::PASS && currstate->superko()) {
-            node->invalidate();
-            failed_simulation(bd);
-            return;
-        }
+        is_root = false;
     }
 }
 
@@ -732,9 +691,7 @@ int UCTSearch::est_playouts_left(int elapsed_centis, int time_for_move) const {
 
 size_t UCTSearch::prune_noncontenders(int elapsed_centis, int time_for_move, bool prune) {
     auto Nfirst = 0;
-    // There are no cases where the root's children vector gets modified
-    // during a multithreaded search, so it is safe to walk it here without
-    // taking the (root) node lock.
+
     for (const auto& node : m_root->get_children()) {
         if (node->valid()) {
             Nfirst = std::max(Nfirst, (int)node->get_visits());
@@ -756,7 +713,6 @@ size_t UCTSearch::prune_noncontenders(int elapsed_centis, int time_for_move, boo
             }
         }
     }
-
     assert(pruned_nodes < m_root->get_children().size());
     return pruned_nodes;
 }
@@ -767,8 +723,13 @@ bool UCTSearch::have_alternate_moves(int elapsed_centis, int time_for_move) {
     }
     // For self play use. Disables pruning of non-contenders to not bias the training data.
     auto prune = cfg_timemanage != TimeManagement::NO_PRUNING;
+
+    if (m_root->get_children().size() == 0) { return true; }
+    m_root->acquire_reader();
     auto pruned = prune_noncontenders(elapsed_centis, time_for_move, prune);
-    if (pruned < m_root->get_children().size() - 1) {
+    auto size = m_root->get_children().size();
+    m_root->release_reader(1);
+    if (pruned < size - 1) {
         return true;
     }
     // If we cannot save up time anyway, use all of it. This
@@ -837,15 +798,7 @@ int UCTSearch::think(int color, passflag_t passflag) {
 
     myprintf("Thinking at most %.1f seconds...\n", time_for_move/100.0f);
 
-    m_run = true;
-    // create a sorted list of legal moves (make sure we
-    // play something legal and decent even in time trouble)
-    if (m_root->expandable()) {
-        play_simulation(std::make_unique<GameState>(m_rootstate), m_root.get(), 0);
-        std::unique_lock<std::mutex> lk(m_mutex);
-        m_cv.wait(lk, [this] { return !m_root->expandable(); });
-    }
-    m_root->prepare_root_node(m_network, color, m_nodes, m_rootstate);
+    m_run = true; 
 
     int cpus = cfg_num_threads;
     ThreadGroup tg(thread_pool);
@@ -908,19 +861,22 @@ int UCTSearch::think(int color, passflag_t passflag) {
     Time elapsed;
     int elapsed_centis = Time::timediff_centis(start, elapsed);
     if (elapsed_centis+1 > 0) {
-        myprintf("%7.2f visits, %d nodes, %d playouts, %.0f n/s, %.0f pos/s\n\n",
+        myprintf("%7.2f visits, %d nodes, %d inflated, %d playouts, %.0f n/s, %.0f pos/s\n\n",
                  m_root->get_visits(),
-                 m_nodes.load(),
+            UCTNodePointer::m_nodes.load(), UCTNodePointer::m_inflated_nodes.load(),
                  m_playouts.load(),
                  (m_playouts * 100.0) / (elapsed_centis+1),
                  (m_positions * 100.0) / (elapsed_centis+1));
 
         m_network.nncache_dump_stats();
-        myprintf("failed simulations: %d\n", m_failed_simulations.load());
-        myprintf("max pending backups: %zu\n", max_pending_backups);
-        myprintf("max pending with multiplicities: %d\n", max_pending_w_mult);
-        myprintf("max multiplicity: %d\n", max_mult);
+#ifdef ACCUM_DEBUG
+        myprintf("failed simulations: %u\n", failed_simulations.load());
+        myprintf("max pending backups: %u\n", max_pending_backups.load());
+        myprintf("max pending with multiplicities: %u\n", max_pending_w_mult.load());
+        myprintf("max leaf vl multiplicity: %u\n", max_leaf_vl.load());
+        myprintf("max vl multiplicity: %u\n", max_vl.load());
         //myprintf("%s", m_debug_string.c_str());
+#endif
 #ifdef USE_OPENCL
 #ifndef NDEBUG
         myprintf("batch stats: %d %d\n", batch_stats[0].load(), batch_stats[1].load());
@@ -939,13 +895,6 @@ void UCTSearch::ponder() {
     update_root();
 
     m_run = true;
-    if (m_root->expandable()) { 
-        play_simulation(std::make_unique<GameState>(m_rootstate), m_root.get(), 0); 
-        std::unique_lock<std::mutex> lk(m_mutex);
-        m_cv.wait(lk, [&lk, this] { return !m_root->expandable(); });
-    }
-    m_root->prepare_root_node(m_network, m_rootstate.board.get_to_move(),
-                              m_nodes, m_rootstate);
 
     ThreadGroup tg(thread_pool);
     for (int i = 1; i < cfg_num_threads; i++) {
@@ -979,13 +928,16 @@ void UCTSearch::ponder() {
     myprintf("\n");
     dump_stats(m_rootstate, *m_root);
 
-    myprintf("\n%d visits, %d nodes\n\n", m_root->get_visits(), m_nodes.load());
+    myprintf("\n%d visits, %d nodes, %d inflated\n\n", m_root->get_visits(), 
+        UCTNodePointer::m_nodes.load(), UCTNodePointer::m_inflated_nodes.load());
     m_network.nncache_dump_stats();
-    myprintf("failed simulations: %d\n", m_failed_simulations.load());
-    myprintf("max pending backups: %zu\n", max_pending_backups);
-    myprintf("max pending with multiplicities: %d\n", max_pending_w_mult);
-    myprintf("max multiplicity: %d\n", max_mult);
-
+#ifdef ACCUM_DEBUG
+    myprintf("failed simulations: %u\n", failed_simulations.load());
+    myprintf("max pending backups: %u\n", max_pending_backups.load());
+    myprintf("max pending with multiplicities: %u\n", max_pending_w_mult.load());
+    myprintf("max leaf vl multiplicity: %u\n", max_leaf_vl.load());
+    myprintf("max vl multiplicity: %u\n", max_vl.load());
+#endif
     // Copy the root state. Use to check for tree re-use in future calls.
     m_last_rootstate = std::make_unique<GameState>(m_rootstate);
 }

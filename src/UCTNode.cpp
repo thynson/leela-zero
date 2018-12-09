@@ -52,7 +52,6 @@ std::array<std::array<int, NUM_INTERSECTIONS>,
 
 void UCTNode::create_children(Network::Netresult& raw_netlist0,
                                int symmetry,
-                               std::atomic<int>& nodecount,
                                GameState& state, 
                                float min_psa_ratio) {
     if (!expandable(min_psa_ratio)) {
@@ -102,12 +101,11 @@ void UCTNode::create_children(Network::Netresult& raw_netlist0,
         }
     }
 
-    link_nodelist(nodecount, nodelist, min_psa_ratio);
+    link_nodelist(nodelist, min_psa_ratio);
     return;
 }
 
-void UCTNode::link_nodelist(std::atomic<int>& nodecount,
-                            std::vector<Network::PolicyVertexPair>& nodelist,
+void UCTNode::link_nodelist(std::vector<Network::PolicyVertexPair>& nodelist,
                             float min_psa_ratio) {
     assert(min_psa_ratio < m_min_psa_ratio_children);
 
@@ -117,6 +115,9 @@ void UCTNode::link_nodelist(std::atomic<int>& nodecount,
 
     // Use best to worst order, so highest go first
     std::stable_sort(rbegin(nodelist), rend(nodelist));
+    std::vector<bool> to_append(nodelist.size());
+
+    //for ()
 
     const auto max_psa = nodelist[0].first;
     const auto old_min_psa = max_psa * m_min_psa_ratio_children;
@@ -138,7 +139,6 @@ void UCTNode::link_nodelist(std::atomic<int>& nodecount,
             break;
         } else if (node.first < old_min_psa) {
             m_children.emplace_back(node.second, node.first);
-            ++nodecount;
         }
     }
 
@@ -154,19 +154,19 @@ int UCTNode::get_move() const {
     return m_move;
 }
 
-void UCTNode::virtual_loss() {
-    m_virtual_loss += VIRTUAL_LOSS_COUNT;
+void UCTNode::virtual_loss(uint32_t vl) {
+    m_virtual_loss += vl;
 }
 
-void UCTNode::virtual_loss_undo(int multiplicity) {
-    m_virtual_loss -= VIRTUAL_LOSS_COUNT * multiplicity;
+void UCTNode::virtual_loss_undo(uint32_t vl) {
+    if (vl != 0) { m_virtual_loss -= vl; }
 }
 
-void UCTNode::update(float eval, int multiplicity, float factor, float sel_factor) {
+void UCTNode::update(float eval, uint32_t vl, float factor, float sel_factor) {
     atomic_add(m_visits, double(factor));
     atomic_add(m_blackevals, double(eval*factor));
-    atomic_add(m_sel_visits, double(sel_factor));
-    virtual_loss_undo(multiplicity);
+    //atomic_add(m_sel_visits, double(sel_factor));
+    release_reader(vl);
 }
 
 bool UCTNode::has_children() const {
@@ -193,17 +193,17 @@ void UCTNode::set_policy(float policy) {
 }
 
 double UCTNode::get_visits(visit_type type) const {
-    if (type == SEL) { return m_sel_visits; }
-    else if (type == WR) { return m_visits; }
-    else if (type == VL) { return m_visits + m_virtual_loss; }
+    //if (type == SEL) { return m_sel_visits; } else 
+    if (type == WR) { return m_visits; }
+    else if (type == VL) { return m_visits + m_virtual_loss * VIRTUAL_LOSS_COUNT; }
 }
 
-float UCTNode::get_raw_eval(int tomove, int virtual_loss) const {
+float UCTNode::get_raw_eval(int tomove, double virtual_loss) const {
     auto visits = get_visits(WR) + virtual_loss;
     assert(visits > 0);
     auto blackeval = get_blackevals();
     if (tomove == FastBoard::WHITE) {
-        blackeval += static_cast<double>(virtual_loss);
+        blackeval += virtual_loss;
     }
     auto eval = static_cast<float>(blackeval / double(visits));
     if (tomove == FastBoard::WHITE) {
@@ -216,7 +216,7 @@ float UCTNode::get_eval(int tomove) const {
     // Due to the use of atomic updates and virtual losses, it is
     // possible for the visit count to change underneath us. Make sure
     // to return a consistent result to the caller by caching the values.
-    return get_raw_eval(tomove, m_virtual_loss);
+    return get_raw_eval(tomove, m_virtual_loss * VIRTUAL_LOSS_COUNT);
 }
 
 float UCTNode::get_net_eval(int tomove) const {
@@ -276,13 +276,11 @@ float factor(float q_c, float p_c, double v_c, float q_a, float p_a, double v_a,
 }
 
 std::pair<UCTNode*, float> UCTNode::uct_select_child(int color, bool is_root) {
-    if (m_expand_state != ExpandState::EXPANDED) { return std::make_pair(nullptr, 1.0f); }
 
+    /*
     // Count parentvisits manually to avoid issues with transpositions.
-    auto total_visited_policy = 0.0f;
     auto parentvisits = 0.0;
     auto actual_parentvisits = 0.0;
-    
     for (const auto& child : m_children) {
         if (child.valid()) {
             actual_parentvisits += child.get_visits();
@@ -295,10 +293,15 @@ std::pair<UCTNode*, float> UCTNode::uct_select_child(int color, bool is_root) {
         }
     }
     if (!cfg_vl_in_parentvisits) { parentvisits = actual_parentvisits; }
+    */
+    auto actual_parentvisits = get_visits(); 
+    // will be somewhat smaller than sum of children visits due to fractional backup
+    auto parentvisits = actual_parentvisits;
+    if (cfg_vl_in_parentvisits) { parentvisits = get_visits(VL); }
  
     auto numerator = std::sqrt(parentvisits);
     auto actual_numerator = std::sqrt(actual_parentvisits);
-    auto parent_eval = get_visits(WR) > 0.0 ? get_raw_eval(color) : get_net_eval(color);
+    auto parent_eval = get_raw_eval(color); // get_visits(WR) > 0.0 ? get_raw_eval(color) : get_net_eval(color);
 
     auto best = static_cast<UCTNodePointer*>(nullptr);
     auto actual_best = best;
@@ -307,11 +310,17 @@ std::pair<UCTNode*, float> UCTNode::uct_select_child(int color, bool is_root) {
     auto actual_value_of_best = best_value;
     auto q_of_best = 0.0;
     auto q_of_actual_best = 0.0;
-    total_visited_policy = 0.0f;
+    auto total_visited_policy = 0.0f;
     auto policy_of_best = 0.0f;
     auto policy_of_actual_best = 0.0f;
     auto visits_of_best = 0.0;
     auto visits_of_actual_best = 0.0;
+
+#ifdef LOCK_DEBUG
+    auto size = m_children.size();
+    std::vector<float> winrates;
+    std::vector<float> pucts;
+#endif
 
     for (auto& child : m_children) {
         if (!child.active()) {
@@ -326,14 +335,12 @@ std::pair<UCTNode*, float> UCTNode::uct_select_child(int color, bool is_root) {
         winrate -= (is_root? cfg_fpu_root_reduction : cfg_fpu_reduction) * std::sqrt(total_visited_policy);
 
         auto actual_winrate = winrate;
-        bool has_visits = false;
-        if (child.get_visits(WR) > 0.0) {
+        auto visits = child.get_visits();
+        if (visits > 0.0) {
             winrate = child.get_eval(color);
             actual_winrate = child.get_raw_eval(color);
-            has_visits = true;
         }
         auto psa = child.get_policy();
-        auto visits = child.get_visits();
         total_visited_policy += psa;
         auto denom = 1.0 + child.get_visits(VL);
         auto actual_denom = 1.0 + visits;
@@ -341,6 +348,15 @@ std::pair<UCTNode*, float> UCTNode::uct_select_child(int color, bool is_root) {
         auto actual_puct = cfg_puct * psa * (actual_numerator / actual_denom);
         auto value = winrate + puct;
         auto actual_value = actual_winrate + actual_puct;
+
+#ifdef LOCK_DEBUG
+        winrates.emplace_back(winrate);
+        pucts.emplace_back(cfg_puct);
+        pucts.emplace_back(psa);
+        pucts.emplace_back(parentvisits);
+        pucts.emplace_back(actual_parentvisits);
+        pucts.emplace_back(denom);
+#endif
         
         if (actual_value > best_actual_value) {
             best_actual_value = actual_value;
@@ -349,7 +365,6 @@ std::pair<UCTNode*, float> UCTNode::uct_select_child(int color, bool is_root) {
             visits_of_actual_best = visits;
             actual_best = &child;
         }
-        auto to_expand = false;
         if (value > best_value) {
             best = &child;
             best_value = value;
@@ -357,14 +372,19 @@ std::pair<UCTNode*, float> UCTNode::uct_select_child(int color, bool is_root) {
             q_of_best = actual_winrate;
             policy_of_best = psa;
             visits_of_best = visits;
-            if (to_expand) { break; }
         }
     }
 
+    assert(best != nullptr);
+#ifdef LOCK_DEBUG
     // if (is_root) { myprintf("%f, %f\n", parentvisits, best_value); }//
-
-    //assert(best != nullptr);
-    if (best == nullptr) return std::make_pair(nullptr, 1.0f);
+    if (best == nullptr) {
+        myprintf("%d, %f,,, %f, %f, %f, %f ", size, parent_eval, pucts[0], pucts[1],pucts[2],pucts[3]);
+        //for (auto val : pucts) { myprintf("%f, ", val); }
+        //for (auto val : winrates) { myprintf("%f, ", val); }
+        return std::make_pair(nullptr, 1.0f);
+    }
+#endif
     best->inflate();
     if (best == actual_best || !cfg_frac_backup) return std::make_pair(best->get(), 1.0f);
     return std::make_pair(best->get(), factor(q_of_best, policy_of_best, visits_of_best,
@@ -400,31 +420,19 @@ void UCTNode::sort_children(int color) {
 }
 
 UCTNode& UCTNode::get_best_root_child(int color, bool running) {
-    if (running) { wait_expanded(); } else
-    if (m_expand_state == ExpandState::EXPANDING) { expand_done(); }
+    acquire_reader();
+
+    // acquire_reader of m_root .. 
+    // to delete the root, need to acquire_writer of m_pre_root..
 
     assert(!m_children.empty());
 
     auto ret = std::max_element(begin(m_children), end(m_children),
                                 NodeComp(color));
+    release_reader(1);
     ret->inflate();
 
     return *(ret->get());
-}
-
-size_t UCTNode::count_nodes_and_clear_expand_state() {
-    auto nodecount = size_t{0};
-    m_virtual_loss = 0;
-    nodecount += m_children.size();
-    if (expandable()) {
-        m_expand_state = ExpandState::INITIAL;
-    }
-    for (auto& child : m_children) {
-        if (child.is_inflated()) {
-            nodecount += child->count_nodes_and_clear_expand_state();
-        }
-    }
-    return nodecount;
 }
 
 void UCTNode::invalidate() {
@@ -445,32 +453,96 @@ bool UCTNode::active() const {
     return m_status == ACTIVE;
 }
 
-bool UCTNode::acquire_expanding() {
-    auto expected = ExpandState::INITIAL;
-    auto newval = ExpandState::EXPANDING;
-    return m_expand_state.compare_exchange_strong(expected, newval);
+float UCTNode::get_min_psa_ratio() {
+    const auto mem_full = UCTNodePointer::get_tree_size() / static_cast<float>(cfg_max_tree_size);
+    // If we are halfway through our memory budget, start trimming
+    // moves with very low policy priors.
+    if (mem_full > 0.5f) {
+        // Memory is almost exhausted, trim more aggressively.
+        if (mem_full > 0.95f) {
+            // if completely full just stop expansion by returning an impossible number
+            if (mem_full >= 1.0f) {
+                return 2.0f;
+            }
+            return 0.01f;
+        }
+        return 0.001f;
+    }
+    return 0.0f;
 }
 
-void UCTNode::expand_done() {
-    auto v = m_expand_state.exchange(ExpandState::EXPANDED);
-#ifdef NDEBUG
-    (void)v;
-#endif
-    assert(v == ExpandState::EXPANDING);
-}
-void UCTNode::expand_cancel() {
-    auto v = m_expand_state.exchange(ExpandState::INITIAL);
-#ifdef NDEBUG
-    (void)v;
-#endif
-    assert(v == ExpandState::EXPANDING);
-}
-void UCTNode::wait_expanded() {
-    while (m_expand_state.load() == ExpandState::EXPANDING) {}
-    auto v = m_expand_state.load();
-#ifdef NDEBUG
-    (void)v;
-#endif
-    assert(v == ExpandState::EXPANDED);
+void UCTNode::acquire_reader() {
+    while (true) {
+        if (m_lock >= 170) { continue; }
+        if (m_lock.fetch_add(1) >= 170) {
+            --m_lock;
+            continue;
+        }
+        virtual_loss();
+        return;
+    }
 }
 
+void UCTNode::release_reader(uint32_t vl, bool incr) {
+    if (incr) { virtual_loss(vl); }
+    else { virtual_loss_undo(vl); }
+    --m_lock;
+}
+
+bool UCTNode::pre_acquire_writer() {
+    std::uint8_t expected;
+    do {
+        expected = m_lock;
+        if (expected >= 85) {
+            return false;
+        }
+    } while (!m_lock.compare_exchange_strong(expected, 86 + expected));
+    virtual_loss();
+    return true;
+}
+// readers can still come in, but not other writers (if success)
+// long time gap (NN eval) before writer privilege actually needed
+
+void UCTNode::acquire_writer() {
+    m_lock += 85;
+    while (m_lock != 171) {}
+}
+// only called after pre-acquired writer
+// after this no other readers or writers can come in
+// virtual_loss won't be incremented any more
+// can now undo all virtual loss at this node (and matching amount from each ancestor)
+
+void UCTNode::release_writer() {
+    m_lock -= 170;
+}
+
+UCTNode::Action UCTNode::get_action(bool is_root) {
+    /*
+    std::uint8_t lk = m_lock;
+    if (3 <= lk && lk <= 84) { myprintf("problem! %d\n", lk); }
+    if (88 <= lk && lk <= 169) { myprintf("problem+! %d\n", lk); }
+    */
+    if (m_lock == 84) {
+        myprintf("problem!\n");
+        std::this_thread::sleep_for(std::chrono::milliseconds(10000));
+    }
+
+    ///
+    while (true) {
+        std::uint8_t lock = m_lock;
+        if (lock >= 170) { continue; }
+        if (lock < 85 &&
+            (m_visits == 0.0 || expandable(is_root ? 0.0 : get_min_psa_ratio())) &&
+            pre_acquire_writer()) {
+            return WRITE;
+        }
+        lock = m_lock.fetch_add(1);
+        if (lock >= 170) { --m_lock; continue; }
+        virtual_loss();
+        if (has_children()) { while (m_visits == 0.0) {}; return READ; }
+        else {
+            if (lock >= 85) { return FAIL; }
+            else { myprintf("No children due to low memory!\n"); return BACKUP; }
+        }
+    }
+}

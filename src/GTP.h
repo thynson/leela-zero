@@ -48,9 +48,10 @@ extern std::uint64_t cfg_rng_seed;
 extern bool cfg_dumbpass;
 #ifdef USE_OPENCL
 extern std::vector<int> cfg_gpus;
+extern std::vector<int> cfg_workers;
 extern bool cfg_sgemm_exhaustive;
 extern bool cfg_tune_only;
-extern int cfg_batch_size;
+extern std::vector<int> cfg_batch_size;
 extern bool cfg_frac_backup;
 extern bool cfg_vl_in_parentvisits;
 #ifdef USE_HALF

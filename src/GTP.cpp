@@ -65,9 +65,10 @@ std::uint64_t cfg_rng_seed;
 bool cfg_dumbpass;
 #ifdef USE_OPENCL
 std::vector<int> cfg_gpus;
+std::vector<int> cfg_workers;
 bool cfg_sgemm_exhaustive;
 bool cfg_tune_only;
-int cfg_batch_size;
+std::vector<int> cfg_batch_size;
 bool cfg_frac_backup;
 bool cfg_vl_in_parentvisits;
 #ifdef USE_HALF
@@ -124,11 +125,12 @@ void GTP::setup_default_parameters() {
     cfg_weightsfile = leelaz_file("best-network");
 #ifdef USE_OPENCL
     cfg_gpus = { };
+    cfg_workers = { };
     cfg_sgemm_exhaustive = false;
     cfg_tune_only = false;
 
     // we will re-calculate this on Leela.cpp
-    cfg_batch_size = 5;
+    cfg_batch_size = { };
     cfg_frac_backup = true;
     cfg_vl_in_parentvisits = true;
 #ifdef USE_HALF
