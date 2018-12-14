@@ -175,6 +175,7 @@ void UCTSearch::update_root() {
     max_vl = 0;
     max_leaf_vl = 0;
 #endif
+    m_pending_backups = new std::atomic<int>(0);
 
 #ifndef NDEBUG
     auto start_nodes = m_root->count_nodes_and_clear_expand_state();
@@ -764,6 +765,32 @@ bool UCTSearch::stop_thinking(int elapsed_centis, int time_for_move) const {
 
 void UCTWorker::operator()() {
     do {
+        //check m_run, if false, acquire lock of mutex and wait for cv.
+        //when to set m_run = true and when to set false? 
+        //when entering think() or ponder(), set true;
+        //when leaving, not nec set false; only set false when not pondering
+        //check cfg_ponder .. both in UCTSearch and in GTP?
+
+        //also change ponder's main thread to dedicate to output only
+
+        //acquire m_root_lock reader
+        //make unique rootstate; copy m_root; copy m_pending_count (pointer)
+        //increment *m_pending_count 
+        // : make sure after acquiring writer, *m_pending_count can no longer be increased
+        //release m_root_lock reader
+        //play simulation
+        //decrement *m_pending_count when returning or when backup
+
+        // update_root()
+        // acquire m_root_lock writer
+        // replace m_root, m_rootstate, m_pending_count
+        // spawn a thread to monitor the old m_pending_count until 0, then destroy old tree..
+
+        // when root hasn't been created or synced with rootstate in update_root()..
+        // if there's a possbility that the rootstate may be changed (the 'game' in GTP.cpp)
+        // then first acquire the writer ..
+        // when handing back control of gamestate from UCTSearch to GTP, always acquire_writer ..
+        // release it in update_root()
         m_search->play_simulation(std::make_unique<GameState>(m_rootstate), m_root, m_thread_num);
     } while (m_search->is_running());
 }

@@ -95,6 +95,10 @@ public:
     std::atomic<int> m_positions{0};
     std::atomic<bool> m_run{false};
     std::condition_variable m_cv;
+
+    void backup(BackupData& bd, Netresult_ptr netresult);
+
+private:
     
 #ifdef ACCUM_DEBUG
     std::atomic<int> failed_simulations{0};
@@ -102,14 +106,23 @@ public:
     std::atomic<uint32_t> max_vl;
     std::atomic<int> pending_backups;
     std::atomic<int> max_pending_backups;
-    std::atomic<int> pending_w_mult;
+    std::atomic<int> pending_w_mult{0};
     std::atomic<int> max_pending_w_mult;
 
     std::string m_debug_string = "";
 #endif
-    void backup(BackupData& bd, Netresult_ptr netresult);
+    
+    std::atomic<uint8_t> m_root_lock;
+    std::atomic<int>* m_pending_backups{0};
+    GameState & m_rootstate;
+    std::unique_ptr<GameState> m_last_rootstate;
+    std::unique_ptr<UCTNode> m_root;
+    std::atomic<int> m_playouts;
+    int m_maxplayouts;
+    int m_maxvisits;
 
-private:
+    std::list<Utils::ThreadGroup> m_delete_futures;
+
     void dump_stats(FastState& state, UCTNode& parent);
     void tree_stats(const UCTNode& node);
     std::string get_pv(FastState& state, UCTNode& parent);
@@ -125,15 +138,6 @@ private:
     bool advance_to_new_rootstate();
     void output_analysis(FastState & state, UCTNode & parent);
 
-    GameState & m_rootstate;
-    std::unique_ptr<GameState> m_last_rootstate;
-    std::unique_ptr<UCTNode> m_root;
-    std::atomic<int> m_playouts;
-    int m_maxplayouts;
-    int m_maxvisits;
-
-    std::list<Utils::ThreadGroup> m_delete_futures;
-
     Network & m_network;
 
     void backup(BackupData& bd, uint32_t vl);
@@ -142,13 +146,14 @@ private:
 
 class UCTWorker {
 public:
-    UCTWorker(GameState & state, UCTSearch * search, UCTNode * root, int thread_num)
-      : m_rootstate(state), m_search(search), m_root(root), m_thread_num(thread_num) {}
+    UCTWorker(GameState & state, UCTSearch * search, UCTNode * root, std::atomic<int>* pending_count, int thread_num)
+      : m_rootstate(state), m_search(search), m_root(root), m_pending_count(pending_count), m_thread_num(thread_num) {}
     void operator()();
 private:
     GameState & m_rootstate;
     UCTSearch * m_search;
     UCTNode * m_root;
+    std::atomic<int>* m_pending_count;
     int m_thread_num;
 };
 
