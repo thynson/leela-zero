@@ -54,6 +54,7 @@ extern bool cfg_tune_only;
 extern std::vector<int> cfg_batch_size;
 extern bool cfg_frac_backup;
 extern bool cfg_vl_in_parentvisits;
+extern float cfg_uct_temp;
 #ifdef USE_HALF
 enum class precision_t {
     AUTO, SINGLE, HALF

@@ -71,6 +71,7 @@ bool cfg_tune_only;
 std::vector<int> cfg_batch_size;
 bool cfg_frac_backup;
 bool cfg_vl_in_parentvisits;
+float cfg_uct_temp;
 #ifdef USE_HALF
 precision_t cfg_precision;
 #endif
@@ -133,6 +134,7 @@ void GTP::setup_default_parameters() {
     cfg_batch_size = { };
     cfg_frac_backup = true;
     cfg_vl_in_parentvisits = true;
+    cfg_uct_temp = 0.0;
 #ifdef USE_HALF
     cfg_precision = precision_t::HALF;
 #endif

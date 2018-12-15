@@ -27,6 +27,7 @@
 #include <iterator>
 #include <limits>
 #include <numeric>
+#include <random>
 #include <utility>
 #include <vector>
 
@@ -36,6 +37,7 @@
 #include "GTP.h"
 #include "GameState.h"
 #include "Network.h"
+#include "Random.h"
 #include "Utils.h"
 
 using namespace Utils;
@@ -166,7 +168,7 @@ void UCTNode::update(float eval, uint32_t vl, float factor, float sel_factor) {
     atomic_add(m_visits, double(factor));
     atomic_add(m_blackevals, double(eval*factor));
     //atomic_add(m_sel_visits, double(sel_factor));
-    release_reader(vl);
+    virtual_loss_undo(vl);
 }
 
 bool UCTNode::has_children() const {
@@ -238,22 +240,23 @@ float uct_value(float q, float p, double v, double v_total) {
     return q + cfg_puct * p * sqrt(v_total) / (1.0 + v);
 }
 
-double binary_search_visits(std::function<double(double)> f, double v_init) {
+float binary_search_visits(std::function<float(float)> f, float v_init) {
     auto low = 0.0;
     auto high = v_init;
+    if (f(low) > 0.0) { return 0.0; }
     while (f(high) < 0.0) { low = high; high = 2.0 * high; }
     while (true) {
         auto mid = (low + high) / 2.0;
         auto fmid = f(mid);
-        if (abs(fmid) < 0.000001) { return mid; }
+        if (abs(fmid) < 0.0001) { return mid; }
         if (fmid < 0.0) { low = mid; }
         else { high = mid; }
     }
 }
 
-float factor(float q_c, float p_c, double v_c, float q_a, float p_a, double v_a, double v_total) {
+float factor(float q_c, float p_c, float v_c, float q_a, float p_a, float v_a, float v_total) {
     auto v_additional = binary_search_visits(
-        [q_c, p_c, v_c, q_a, p_a, v_a, v_total](double x) {
+        [q_c, p_c, v_c, q_a, p_a, v_a, v_total](float x) {
         return uct_value(q_c, p_c, v_c, v_total + x) - uct_value(q_a, p_a, v_a + x, v_total + x); },
         1.0 + v_total);
 
@@ -316,13 +319,24 @@ std::pair<UCTNode*, float> UCTNode::uct_select_child(int color, bool is_root) {
     auto visits_of_best = 0.0;
     auto visits_of_actual_best = 0.0;
 
+#ifdef UCT_SOFTMAX
+    auto accum = 0.0;
+    auto accum_vector = std::vector<double>{};
+    auto index_vector = std::vector<int>{};
+    auto q_vector = std::vector<double>{};
+    accum_vector.reserve(m_children.size());
+    index_vector.reserve(m_children.size());
+    q_vector.reserve(m_children.size());
+#endif
+
 #ifdef LOCK_DEBUG
     auto size = m_children.size();
     std::vector<float> winrates;
     std::vector<float> pucts;
 #endif
 
-    for (auto& child : m_children) {
+    for (auto i = 0; i < m_children.size(); i++) {
+        auto& child = m_children[i];
         if (!child.active()) {
             continue;
         }
@@ -348,6 +362,15 @@ std::pair<UCTNode*, float> UCTNode::uct_select_child(int color, bool is_root) {
         auto actual_puct = cfg_puct * psa * (actual_numerator / actual_denom);
         auto value = winrate + puct;
         auto actual_value = actual_winrate + actual_puct;
+
+#ifdef UCT_SOFTMAX
+        if (cfg_uct_temp > 0.0) { 
+            accum += std::exp(value / cfg_uct_temp); // takes too long!!
+            accum_vector.emplace_back(accum); 
+            index_vector.emplace_back(i);
+            q_vector.emplace_back(actual_winrate);
+        }
+#endif
 
 #ifdef LOCK_DEBUG
         winrates.emplace_back(winrate);
@@ -375,6 +398,22 @@ std::pair<UCTNode*, float> UCTNode::uct_select_child(int color, bool is_root) {
         }
     }
 
+#ifdef UCT_SOFTMAX
+    if (cfg_uct_temp > 0.0) {
+        auto distribution = std::uniform_real_distribution<double>{ 0.0, accum };
+        auto pick = distribution(Random::get_Rng());
+        for (auto i = 0; i < accum_vector.size(); i++) {
+            if (pick < accum_vector[i]) {
+                best = &(m_children[index_vector[i]]);
+                q_of_best = q_vector[i];
+                policy_of_best = best->get_policy();
+                visits_of_best = best->get_visits();
+                break;
+            }
+        }
+    }
+#endif
+
     assert(best != nullptr);
 #ifdef LOCK_DEBUG
     // if (is_root) { myprintf("%f, %f\n", parentvisits, best_value); }//
@@ -387,9 +426,13 @@ std::pair<UCTNode*, float> UCTNode::uct_select_child(int color, bool is_root) {
 #endif
     best->inflate();
     if (best == actual_best || !cfg_frac_backup) return std::make_pair(best->get(), 1.0f);
+#ifdef UCT_SOFTMAX
+    return std::make_pair(best->get(), 1.0f);
+#else
     return std::make_pair(best->get(), factor(q_of_best, policy_of_best, visits_of_best,
                                               q_of_actual_best, policy_of_actual_best, visits_of_actual_best,
                                               actual_parentvisits));
+#endif
 }
 
 class NodeComp : public std::binary_function<UCTNodePointer&,
@@ -429,7 +472,7 @@ UCTNode& UCTNode::get_best_root_child(int color, bool running) {
 
     auto ret = std::max_element(begin(m_children), end(m_children),
                                 NodeComp(color));
-    release_reader(1);
+    release_reader(0);
     ret->inflate();
 
     return *(ret->get());
@@ -478,7 +521,7 @@ void UCTNode::acquire_reader() {
             --m_lock;
             continue;
         }
-        virtual_loss();
+        //virtual_loss();
         return;
     }
 }
@@ -513,10 +556,11 @@ void UCTNode::acquire_writer() {
 // can now undo all virtual loss at this node (and matching amount from each ancestor)
 
 void UCTNode::release_writer() {
-    m_lock -= 170;
+    m_lock -= 171;
 }
 
 UCTNode::Action UCTNode::get_action(bool is_root) {
+#ifdef LOCK_DEBUG
     /*
     std::uint8_t lk = m_lock;
     if (3 <= lk && lk <= 84) { myprintf("problem! %d\n", lk); }
@@ -526,10 +570,9 @@ UCTNode::Action UCTNode::get_action(bool is_root) {
         myprintf("problem!\n");
         std::this_thread::sleep_for(std::chrono::milliseconds(10000));
     }
-
-    ///
+#endif
     while (true) {
-        std::uint8_t lock = m_lock;
+        auto lock = m_lock.load();
         if (lock >= 170) { continue; }
         if (lock < 85 &&
             (m_visits == 0.0 || expandable(is_root ? 0.0 : get_min_psa_ratio())) &&
@@ -541,7 +584,7 @@ UCTNode::Action UCTNode::get_action(bool is_root) {
         virtual_loss();
         if (has_children()) { while (m_visits == 0.0) {}; return READ; }
         else {
-            if (lock >= 85) { return FAIL; }
+            if (lock >= 85) { release_reader(0); return FAIL; }
             else { myprintf("No children due to low memory!\n"); return BACKUP; }
         }
     }
