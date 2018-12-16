@@ -730,35 +730,44 @@ void Network::get_output0(
     const Ensemble ensemble,
     int symmetry, const bool skip_cache) {
 
-    if (bd.state->board.get_boardsize() != BOARD_SIZE) {
+    auto state = bd.state.get();
+    if (state->board.get_boardsize() != BOARD_SIZE) {
         //return result_sym;
     }
 
     Netresult_ptr result;
+    bool ready = false;
+    bool first_visit = false;
     std::unique_lock<std::mutex> lock(m_nncache.m_mutex);
     if (!skip_cache) {
+        bd.symmetry = 0;
+        result = m_nncache.lookup_and_insert(state->board.get_hash(), false, true, bd, ready);
         // If we are not generating a self-play game, try to find
         // symmetries if we are in the early opening.
-        if (!cfg_noise && !cfg_random_cnt
-            && bd.state->get_movenum()
-            < (bd.state->get_timecontrol().opening_moves(BOARD_SIZE) / 2)) {
+        if (!result && !cfg_noise && !cfg_random_cnt
+            && state->get_movenum()
+            < (state->get_timecontrol().opening_moves(BOARD_SIZE) / 2)) {
             // See if we already have this in the cache.
-            for (auto sym = 0; sym < Network::NUM_SYMMETRIES; ++sym) {
-                const auto hash = bd.state->get_symmetry_hash(sym);
+            for (auto sym = 1; sym < Network::NUM_SYMMETRIES; ++sym) {
+                const auto hash = state->get_symmetry_hash(sym);
                 bd.symmetry = sym;
-                result = m_nncache.lookup_and_insert(hash, false, true, bd);
-                if (result) {
-                    break;
-                }
+                result = m_nncache.lookup_and_insert(hash, false, true, bd, ready);
+                if (result) break;
             }
         }
+        if (!result) {
+            bd.symmetry = Network::IDENTITY_SYMMETRY; // = 0
+            result = m_nncache.lookup_and_insert(state->board.get_hash(), true, false, bd, ready);
+            first_visit = true;
+        }
     }
-    if (!result) {
-        bd.symmetry = Network::IDENTITY_SYMMETRY; // = 0
-        result = m_nncache.lookup_and_insert(bd.state->board.get_hash(), true, !skip_cache, bd);
+    else {
+        result = std::make_shared<NNCache::Entry>();
+        result->backup_obligations.emplace_back(std::move(bd));
+        first_visit = true;
     }
-    bool ready = result->ready;
-    bool first_visit = (result->backup_obligations.size() == 1);
+
+    //bool first_visit = (result->backup_obligations.size() == 1);
     lock.unlock();
 
     if (ready) {
@@ -768,6 +777,11 @@ void Network::get_output0(
     if (!first_visit) {
         return;
     }
+#ifdef ACCUM_DEBUG
+    ++(m_search->pending_netresults);
+    m_search->max_pending_netresults = std::max(m_search->max_pending_netresults.load(), 
+                                                m_search->pending_netresults.load());
+#endif
     if (ensemble == DIRECT) {
         assert(symmetry >= 0 && symmetry < NUM_SYMMETRIES);
     }
@@ -803,10 +817,8 @@ void Network::get_output0(
         }
 #endif
     }
-    auto& state = result->backup_obligations[0].state;
-    auto tomove = state->get_to_move();
-    m_forward->forward0(std::make_unique<const std::vector<float>>(gather_features(&*state, symmetry)),
-        tomove, symmetry, result);
+    m_forward->forward0(std::make_unique<const std::vector<float>>(gather_features(state, symmetry)),
+        state->get_to_move(), symmetry, result);
 }
 
 Network::Netresult Network::get_output(
@@ -916,19 +928,56 @@ void Network::process_output(
 
     result->result.policy_pass = outputs[NUM_INTERSECTIONS];
     result->result.winrate = winrate;
-    std::unique_lock<std::mutex> lk(m_nncache.m_mutex);
-    result->ready = true;
+    bool expected = false;
+    //std::unique_lock<std::mutex> lk(m_nncache.m_mutex);
+    while (!(result->ready.compare_exchange_strong(expected, true))) { expected = false; }
+    //auto obligations = std::move(result->backup_obligations);
+    //lk.unlock();
     /*
-    std::unique_lock<std::mutex> lk0(m_search->m_return_mutex);
-    std::move(begin(result->backup_obligations), end(result->backup_obligations),
-              std::back_inserter(m_search->m_return_queue));
-    result->backup_obligations.clear();
-    */
+    if (!result->ready) {
+        myprintf("strange netresult ready status!\n");
+    }
+    else {*/
+    //auto count = 0;
+        //for (auto& bd : result->backup_obligations) {
+            //count++;
+
+    //std::unique_lock<std::mutex> lk(m_nncache.m_mutex);
+    if (!result->ready) {
+        throw("strange netresult ready status!\n");
+    }
     auto obligations = std::move(result->backup_obligations);
-    lk.unlock();
+    //lk.unlock();
+    auto count = 0;
     for (auto& bd : obligations) {
+        count++;
+        if (bd.path.empty()) {
+            throw("path empty! %d\n", count);
+        }
         m_search->backup(bd, result);
     }
+    
+    /*auto& obligations = result->backup_obligations;
+    for (auto i = 0; i < obligations.size(); i++) {
+        if (!result->ready) {
+            throw("strange netresult ready status!\n");
+        }
+        m_search->backup(obligations[i], result);
+    }
+    obligations.clear();*/
+
+    //if (!count) {
+      //  myprintf(" ");
+    //}
+    //}
+    //result->backup_obligations.clear();
+#ifdef ACCUM_DEBUG
+    --(m_search->pending_netresults);
+    m_search->min_pending_netresults = std::min(m_search->min_pending_netresults.load(),
+                                                m_search->pending_netresults.load());
+#endif
+    //lock?
+    //m_search->m_cv.notify_one();
 }
 
 Network::Netresult Network::get_output_internal(

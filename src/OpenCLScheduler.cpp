@@ -104,7 +104,7 @@ void OpenCLScheduler<net_t>::initialize(const int channels) {
     // so that we can at least concurrently schedule something to the GPU.
 
     // number of worker threads
-    if (cfg_workers.empty()) { 
+    if (cfg_workers.empty()) {
         cfg_workers.assign(m_opencl.size(), 2); 
     }
     else {
@@ -327,17 +327,15 @@ void OpenCLScheduler<net_t>::forward0(std::unique_ptr<const std::vector<float>> 
     m_forward_queue0.push_back(std::make_unique<ForwardQueueEntry0>(
         std::move(input), tomove, symmetry, result));
     m_cv.notify_one();
+    /*
     if (m_search->m_run && (int)m_forward_queue0.size() >= m_max_queue_size.load()) {
         m_cv0.wait(lk, [&] { return (int)m_forward_queue0.size() < m_max_queue_size.load()
             || !m_search->m_run; });
         //lk.unlock();
         //m_search->backup();
     }
+    */
 }
-
-#ifndef NDEBUG
-std::atomic<size_t> batch_stats[2];
-#endif
 
 template <typename net_t>
 void OpenCLScheduler<net_t>::batch_worker(const size_t gnum, const size_t i) {
@@ -354,7 +352,7 @@ void OpenCLScheduler<net_t>::batch_worker(const size_t gnum, const size_t i) {
     auto pickup_task = [this, gnum, in_size, i](std::vector<net_t>&batch_in) {
         std::vector<std::unique_ptr<ForwardQueueEntry0>> inputs;
         inputs.reserve(cfg_batch_size[gnum]);
-        auto it = begin(inputs);
+        auto index = 0;
         int count = 0;
         int remaining = cfg_batch_size[gnum];
 
@@ -384,15 +382,16 @@ void OpenCLScheduler<net_t>::batch_worker(const size_t gnum, const size_t i) {
             m_max_queue_size -= count;
             remaining -= count;
 
-            while (it != inputs.end()) {
-                std::transform((*it)->in->begin(), (*it)->in->end(), std::back_inserter(batch_in),
+            while (index < inputs.size()) {
+                std::transform(inputs[index]->in->begin(), inputs[index]->in->end(), std::back_inserter(batch_in),
                     [](float x) {return (net_t)x; });
-                ++it;
+                ++index;
             }
         }
         ++(m_networks[gnum]->m_occupied);
         //myprintf("max queue size: %d - worker %d picking up\n", m_max_queue_size.load(), i);
         m_max_queue_size -= remaining;
+        //m_search->m_pending_netresults += remaining;
         //myprintf("max queue size: %d - worker %d pickup finished\n", m_max_queue_size.load(), i);
         return inputs;
     };
@@ -414,10 +413,6 @@ void OpenCLScheduler<net_t>::batch_worker(const size_t gnum, const size_t i) {
 
         if (!m_running) return;
 
-#ifndef NDEBUG
-        batch_stats[static_cast<int>(count) == cfg_batch_size ? 1 : 0]++;
-#endif
-
         batch_input.resize(in_size * count);
         batch_output_pol.resize(out_pol_size * count);
         batch_output_val.resize(out_val_size * count);
@@ -429,10 +424,10 @@ void OpenCLScheduler<net_t>::batch_worker(const size_t gnum, const size_t i) {
         //std::unique_lock<std::mutex> lk(m_mutex);
         //m_cv.notify_all();
         //lk.unlock();
-        {
+        /*{
             auto t = std::thread([=](std::vector<std::unique_ptr<ForwardQueueEntry0>> inputs_) {
                 auto index = 0;
-                for (auto it = begin(inputs_); it != end(inputs_); ++it) {
+                for (auto it = inputs_.begin(); it != inputs_.end(); ++it) {
                     std::vector<float> out_p(begin(batch_output_pol) + out_pol_size * index,
                         begin(batch_output_pol) + out_pol_size * (index + 1));
                     std::vector<float> out_v(begin(batch_output_val) + out_val_size * index,
@@ -440,8 +435,22 @@ void OpenCLScheduler<net_t>::batch_worker(const size_t gnum, const size_t i) {
                     index++;
                     m_network->process_output(out_p, out_v, (*it)->tomove, (*it)->symmetry, (*it)->result);
                 }
+                //m_search->m_pending_netresults += cfg_batch_size[gnum];
+                m_search->m_cv.notify_all();
             }, std::move(inputs));
             t.detach();
+        }*/
+        {
+            for (auto index = 0; index < inputs.size(); ) {
+                std::vector<float> out_p(begin(batch_output_pol) + out_pol_size * index,
+                    begin(batch_output_pol) + out_pol_size * (index + 1));
+                std::vector<float> out_v(begin(batch_output_val) + out_val_size * index,
+                    begin(batch_output_val) + out_val_size * (index + 1));
+                m_network->process_output(out_p, out_v, inputs[index]->tomove, inputs[index]->symmetry, inputs[index]->result);
+                index++;
+            }
+            //m_search->m_pending_netresults += cfg_batch_size[gnum];
+            m_search->m_cv.notify_all();
         }
         /*
         {

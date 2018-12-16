@@ -40,11 +40,13 @@
  * of UCTSearch and have been seperated to increase code clarity.
  */
 
-UCTNode* UCTNode::get_first_child() const {
+UCTNode* UCTNode::get_first_child() {
+    acquire_reader();
     if (m_children.empty()) {
+        release_reader();
         return nullptr;
     }
-
+    release_reader();
     return m_children.front().get();
 }
 
@@ -101,7 +103,7 @@ void UCTNode::dirichlet_noise(float epsilon, float alpha) {
         child->set_policy(policy);
         //m_children_ptrs.emplace_back(child.get());
     }
-    sort_children(FastBoard::BLACK);
+    //sort_children(FastBoard::BLACK);
     /*
     std::stable_sort(rbegin(m_children_ptrs), rend(m_children_ptrs), 
         [](UCTNode* a, UCTNode* b) { return a->get_policy() < b->get_policy(); });
@@ -152,7 +154,8 @@ void UCTNode::randomize_first_proportionally() {
     std::iter_swap(begin(m_children), begin(m_children) + index);
 }
 
-UCTNode* UCTNode::get_nopass_child(FastState& state) const {
+UCTNode* UCTNode::get_nopass_child(FastState& state) {
+    acquire_reader();
     for (const auto& child : m_children) {
         /* If we prevent the engine from passing, we must bail out when
            we only have unreasonable moves to pick, like filling eyes.
@@ -160,22 +163,26 @@ UCTNode* UCTNode::get_nopass_child(FastState& state) const {
            we require it because we're overruling its moves. */
         if (child->m_move != FastBoard::PASS
             && !state.board.is_eye(state.get_to_move(), child->m_move)) {
+            release_reader();
             return child.get();
         }
     }
+    release_reader();
     return nullptr;
 }
 
 // Used to find new root in UCTSearch.
 std::unique_ptr<UCTNode> UCTNode::find_child(const int move) {
+    acquire_reader();
     for (auto& child : m_children) {
         if (child.get_move() == move) {
              // no guarantee that this is a non-inflated node
             child.inflate();
+            release_reader();
             return std::unique_ptr<UCTNode>(child.release());
         }
     }
-
+    release_reader();
     // Can happen if we resigned or children are not expanded
     return nullptr;
 }

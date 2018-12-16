@@ -204,6 +204,7 @@ const std::string GTP::s_commands[] = {
     "lz-genmove_analyze",
     "lz-memory_report",
     "lz-setoption",
+    "stop",
     ""
 };
 
@@ -306,10 +307,13 @@ void GTP::execute(GameState & game, const std::string& xinput) {
     }
 
     /* process commands */
-    if (command == "protocol_version") {
+    if (command == "stop") {
+        search->m_run = false;
+    } else if (command == "protocol_version") {
         gtp_printf(id, "%d", GTP_VERSION);
         return;
     } else if (command == "name") {
+        search->m_run = false;
         gtp_printf(id, PROGRAM_NAME);
         return;
     } else if (command == "version") {
@@ -366,7 +370,7 @@ void GTP::execute(GameState & game, const std::string& xinput) {
     } else if (command.find("clear_board") == 0) {
         Training::clear_training();
         game.reset_game();
-        s_network->nncache_clear();
+        //s_network->nncache_clear();
         search = std::make_unique<UCTSearch>(game, *s_network);
         assert(UCTNodePointer::get_tree_size() == 0);
         gtp_printf(id, "");
@@ -453,12 +457,13 @@ void GTP::execute(GameState & game, const std::string& xinput) {
                     gtp_printf_raw("play %s\n", vertex.c_str());
                 }
             }
-            if (cfg_allow_pondering) {
+            if (cfg_allow_pondering && !game.has_resigned()) {
                 // now start pondering
-                if (!game.has_resigned()) {
-                    // Outputs winrate and pvs through gtp for lz-genmove_analyze
-                    search->ponder();
-                }
+                // Outputs winrate and pvs through gtp for lz-genmove_analyze
+                search->ponder();
+            }
+            else {
+                search->m_run = false;
             }
             if (analysis_output) {
                 // Terminate multi-line response
@@ -541,11 +546,11 @@ void GTP::execute(GameState & game, const std::string& xinput) {
                 std::string vertex = game.move_to_text(move);
                 gtp_printf(id, "%s", vertex.c_str());
             }
-            if (cfg_allow_pondering) {
-                // now start pondering
-                if (!game.has_resigned()) {
-                    search->ponder();
-                }
+            if (cfg_allow_pondering && !game.has_resigned()) {
+                search->ponder();
+            }
+            else {
+                search->m_run = false;
             }
         } else {
             gtp_fail_printf(id, "syntax not understood");
@@ -623,12 +628,13 @@ void GTP::execute(GameState & game, const std::string& xinput) {
 
             gtp_printf(id, "");
 
-            if (cfg_allow_pondering) {
+            if (cfg_allow_pondering && !game.has_resigned()) {
                 // KGS sends this after our move
                 // now start pondering
-                if (!game.has_resigned()) {
-                    search->ponder();
-                }
+                search->ponder();
+            }
+            else {
+                search->m_run = false;
             }
         } else {
             gtp_fail_printf(id, "syntax not understood");
@@ -639,13 +645,13 @@ void GTP::execute(GameState & game, const std::string& xinput) {
             int move = search->think(game.get_to_move(), UCTSearch::NORMAL);
             game.play_move(move);
             game.display_state();
-
         } while (game.get_passes() < 2 && !game.has_resigned());
-
+        search->m_run = false;
         return;
     } else if (command.find("go") == 0) {
         int move = search->think(game.get_to_move());
         game.play_move(move);
+        search->m_run = false;
 
         std::string vertex = game.move_to_text(move);
         myprintf("%s\n", vertex.c_str());

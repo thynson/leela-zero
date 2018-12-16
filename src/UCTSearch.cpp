@@ -80,14 +80,25 @@ private:
 
 
 UCTSearch::UCTSearch(GameState& g, Network& network)
-    : m_rootstate(g), m_network(network) {
+    : m_gtpstate(g), m_network(network),m_search_threads(thread_pool) {
     set_playout_limit(cfg_max_playouts);
     set_visit_limit(cfg_max_visits);
 
+    m_rootstate = m_gtpstate;
     m_root = std::make_unique<UCTNode>(FastBoard::PASS, 0.0f);
+    m_network.set_search(this);
+
+    for (int i = 1; i <= cfg_num_threads; i++) {
+        m_search_threads.add_task(UCTWorker(this, i));
+    }
 }
 
-bool UCTSearch::advance_to_new_rootstate() {
+UCTSearch::~UCTSearch() {
+    m_terminate = true;
+    m_search_threads.wait_all();
+}
+
+bool UCTSearch::advance_to_new_rootstate(std::list<UCTNode*> to_delete) {
 
     if (!m_root || !m_last_rootstate) {
         // No current state
@@ -117,21 +128,14 @@ bool UCTSearch::advance_to_new_rootstate() {
     }
 
     // Make sure that the nodes we destroyed the previous move are
-    // in fact destroyed.
+    // in fact destroyed
     while (!m_delete_futures.empty()) {
         m_delete_futures.front().wait_all();
         m_delete_futures.pop_front();
     }
 
-    /* stub
-    if (m_root.get() != path[int(path.size()) - 1 - (bd.state->get_movenum() - m_rootstate.get_movenum())].node) {
-        return; 
-    }*/
-
     // Try to replay moves advancing m_root
     for (auto i = 0; i < depth; i++) {
-        ThreadGroup tg(thread_pool);
-
         test->forward_move();
         const auto move = test->get_last_move();
 
@@ -142,9 +146,7 @@ bool UCTSearch::advance_to_new_rootstate() {
         // old root node on the main thread, send the old root to a separate
         // thread and destroy it from the child thread.  This will save a
         // bit of time when dealing with large trees.
-        auto p = oldroot.release();
-        tg.add_task([p]() { delete p; });
-        m_delete_futures.push_back(std::move(tg));
+        to_delete.emplace_back(oldroot.release());
 
         if (!m_root) {
             // Tree hasn't been expanded this far
@@ -163,9 +165,84 @@ bool UCTSearch::advance_to_new_rootstate() {
     return true;
 }
 
+void UCTSearch::acquire_reader() {
+    while (true) {
+        if (m_root_lock >= 128) continue;
+        if (m_root_lock.fetch_add(1) >= 128) {
+            --m_root_lock;
+            continue;
+        }
+        return;
+    }
+}
+
+void UCTSearch::release_reader() {
+    --m_root_lock;
+}
+
+void UCTSearch::acquire_writer() {
+    // only the main thread may attempt this
+    m_root_lock += 128;
+    while (m_root_lock != 128) {}
+}
+
+void UCTSearch::release_writer() {
+    m_root_lock -= 128;
+}
+
 void UCTSearch::update_root() {
+
+#ifndef NDEBUG
+    //auto start_nodes = m_root->count_nodes_and_clear_expand_state();
+#endif
+
+    acquire_writer();
+    m_rootstate = m_gtpstate;
+
+    std::list<UCTNode*> to_delete;
+    if (!advance_to_new_rootstate(to_delete) || !m_root) {
+        if (m_root) {
+            to_delete.emplace_back(m_root.release());
+        }
+        m_root = std::make_unique<UCTNode>(FastBoard::PASS, 0.0f);
+    }
+    if (m_pending_count && !to_delete.empty()) {
+        ThreadGroup tg(thread_pool);
+        tg.add_task([](std::list<UCTNode*> to_delete, std::atomic<int>* pending_monitor) {
+            auto root = to_delete.front();
+            to_delete.pop_front();
+            ThreadGroup tg0(thread_pool);
+            while (*pending_monitor > 0
+                || root->m_virtual_loss) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+            myprintf("root virtual loss at deletion: %d\n", root->m_virtual_loss.load());
+            for (auto node : to_delete) {
+                tg0.add_task([node]() { delete node; });
+            }
+            delete root;
+            tg0.wait_all();
+            delete pending_monitor;
+        }, to_delete, m_pending_count);
+        m_delete_futures.push_back(std::move(tg));
+    }
+
+    // Clear last_rootstate to prevent accidental use.
+    m_last_rootstate.reset(nullptr);
+
+    // Check how big our search tree (reused or new) is.
+    // m_nodes = m_root->count_nodes_and_clear_expand_state();
+
+#ifndef NDEBUG
+    /*if (m_nodes > 0) {
+        myprintf("update_root, %d -> %d nodes (%.1f%% reused)\n",
+            start_nodes, m_nodes.load(), 100.0 * m_nodes.load() / start_nodes);
+    }*/
+#endif
+
     // Definition of m_playouts is playouts per search call.
     // So reset this count now.
+    // However these aren't well protected by m_root_lock.
     m_playouts = 0;
     m_positions = 0;
 #ifdef ACCUM_DEBUG
@@ -174,30 +251,34 @@ void UCTSearch::update_root() {
     max_pending_w_mult = 0;
     max_vl = 0;
     max_leaf_vl = 0;
+    max_pending_netresults = 0;
+    min_pending_netresults = INT_MAX;
 #endif
-    m_pending_backups = new std::atomic<int>(0);
+    // This is protected.
+    m_pending_count = new std::atomic<int>(0);
+    m_root_prepared = false;
+    release_writer();
 
-#ifndef NDEBUG
-    auto start_nodes = m_root->count_nodes_and_clear_expand_state();
-#endif
+    m_run = true;
+    m_must_run = true;
+    std::unique_lock<std::mutex> lk(m_mutex);
+    m_cv.notify_all();
+    lk.unlock();
 
-    if (!advance_to_new_rootstate() || !m_root) {
-        m_root = std::make_unique<UCTNode>(FastBoard::PASS, 0.0f);
+    while (!m_root_prepared) {
+        if (m_network.get_max_size() > 0) {
+            acquire_reader();
+            auto rootstate = std::make_unique<GameState>(m_rootstate);
+            auto root = m_root.get();
+            auto pending_count = m_pending_count;
+            ++(*pending_count);
+            release_reader();
+            play_simulation(std::move(rootstate), root, pending_count, 0);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        //issue a play_simulation_routine don't use m_must_run ..
     }
-    // Clear last_rootstate to prevent accidental use.
-    m_last_rootstate.reset(nullptr);
-
-    // Check how big our search tree (reused or new) is.
-    // m_nodes = m_root->count_nodes_and_clear_expand_state();
-
-#ifndef NDEBUG
-    if (m_nodes > 0) {
-        myprintf("update_root, %d -> %d nodes (%.1f%% reused)\n",
-            start_nodes, m_nodes.load(), 100.0 * m_nodes.load() / start_nodes);
-    }
-#endif
 }
-
 
 void UCTSearch::backup(BackupData& bd, Netresult_ptr netresult) {
     auto& path = bd.path;
@@ -206,19 +287,19 @@ void UCTSearch::backup(BackupData& bd, Netresult_ptr netresult) {
     auto min_psa_ratio = is_root ? 0.0 : UCTNode::get_min_psa_ratio();
     auto first_visit = node->get_visits() == 0.0;
     
-    node->acquire_writer();
-    auto vl = node->m_virtual_loss.load();
-    // writer is responsible for removing all virtual losses injected by concurrent readers
     node->create_children(netresult->result, bd.symmetry, *bd.state, min_psa_ratio);
+    auto vl = node->m_virtual_loss.load();
     if (first_visit) {
         auto eval = netresult->result.winrate;
         bd.eval = (bd.state->get_to_move() == FastBoard::BLACK ? eval : 1.0f - eval);
+        // writer is responsible for removing all virtual losses injected by concurrent readers
         node->update(bd.eval, vl, 1.0f, path.back().factor);
     }
-    if (is_root) { // the old prepare_root_node
-        node->prepare_root_node(*bd.state);
+    if (is_root && !m_root_prepared) {
         // create a sorted list of legal moves (make sure we
         // play something legal and decent even in time trouble)
+        node->prepare_root_node(*bd.state);
+        m_root_prepared = true;
     }
     node->release_writer();
 
@@ -229,7 +310,6 @@ void UCTSearch::backup(BackupData& bd, Netresult_ptr netresult) {
         failed_simulation(bd, 1);
     }
     ++m_playouts;
-    --(*m_pending_backups);
 #ifdef ACCUM_DEBUG
     if (!is_root && first_visit) {
         max_leaf_vl = std::max(max_leaf_vl.load(), vl);
@@ -247,6 +327,7 @@ void UCTSearch::backup(BackupData& bd, uint32_t vl) {
         nf->node->update(bd.eval, vl, factor, sel_factor);
         factor = sel_factor;
     }
+    --(*bd.pending_count);
 }
 
 void UCTSearch::failed_simulation(BackupData& bd, uint32_t vl, bool incr) {
@@ -259,9 +340,8 @@ void UCTSearch::failed_simulation(BackupData& bd, uint32_t vl, bool incr) {
             nf->node->virtual_loss_undo(vl);
         }
     }
+    --(*bd.pending_count);
 }
-
-
 
 float eval_from_score(float board_score) {
     if (board_score > 0.0f) { return 1.0f; }
@@ -271,9 +351,11 @@ float eval_from_score(float board_score) {
 
 void UCTSearch::play_simulation(std::unique_ptr<GameState> currstate,
                                         UCTNode* node,
+                                        std::atomic<int>* pending_count,
                                         int thread_num) {
     auto factor = 1.0f;
     BackupData bd;
+    bd.pending_count = pending_count;
     bool is_root = true;
     while (true) {
         bd.path.emplace_back(node, factor);
@@ -289,14 +371,14 @@ void UCTSearch::play_simulation(std::unique_ptr<GameState> currstate,
 #ifdef ACCUM_DEBUG
         if(!is_root) max_vl = std::max(max_vl.load(), node->m_virtual_loss + 1);
 #endif
-        switch (node->get_action(is_root)) {
+        switch (node->get_action(is_root && !m_root_prepared)) {
 
         case UCTNode::WRITE: // expand the node
 #ifdef ACCUM_DEBUG
             ++pending_backups;
             ++pending_w_mult;
             max_pending_backups = std::max(pending_backups.load(), max_pending_backups.load());
-            if(!is_root) max_pending_w_mult = std::max(pending_w_mult.load(), max_pending_w_mult.load());
+            if (!is_root) { max_pending_w_mult = std::max(pending_w_mult.load(), max_pending_w_mult.load()); }
 #endif
             bd.state = std::move(currstate);
             m_network.get_output0(bd, Network::Ensemble::RANDOM_SYMMETRY);
@@ -304,22 +386,24 @@ void UCTSearch::play_simulation(std::unique_ptr<GameState> currstate,
 
         case UCTNode::FAIL: // virtual loss accumulated, return
 #ifdef ACCUM_DEBUG
-            ++pending_w_mult;
-            max_pending_w_mult = std::max(pending_w_mult.load(), max_pending_w_mult.load());
-            if(!is_root) ++failed_simulations;
+            if (!is_root) {
+                ++pending_w_mult;
+                max_pending_w_mult = std::max(pending_w_mult.load(), max_pending_w_mult.load());
+                ++failed_simulations;
+            }
 #endif
             //failed_simulation(bd, node->m_virtual_loss, true);
-            --(*m_pending_backups);
+            --(*pending_count);
             return;
 
         case UCTNode::READ : // select a child 
         {
             auto child_factor = node->uct_select_child(currstate->get_to_move(), is_root);
+            node->release_reader();
             auto new_node = child_factor.first;
             ////if (is_root) { m_debug_string += currstate->move_to_text(new_node->get_move()) + " \n"; } //
             //   if (is_root) { myprintf("%s\n", currstate->move_to_text(new_node->get_move()).c_str()); } //
             if (new_node != nullptr) {
-                node->release_reader(0);
                 node = new_node;
                 factor = child_factor.second;
                 auto move = node->get_move();
@@ -342,12 +426,10 @@ void UCTSearch::play_simulation(std::unique_ptr<GameState> currstate,
         }
 
         case UCTNode::BACKUP :
-            node->release_reader(0);
             bd.eval = node->get_net_eval(FastBoard::BLACK);
             // print the sequence of moves from bd.path ...
             node->update(bd.eval, 1, 1.0f, factor);
             backup(bd, 1);
-            --(*m_pending_backups);
             return;
         }
         is_root = false;
@@ -364,6 +446,7 @@ void UCTSearch::dump_stats(FastState & state, UCTNode & parent) {
     // sort children, put best move on top
     parent.sort_children(color);
 
+    parent.acquire_reader();
     if (parent.get_first_child()->first_visit()) {
         return;
     }
@@ -387,12 +470,14 @@ void UCTSearch::dump_stats(FastState & state, UCTNode & parent) {
             pv.c_str());
     }
     //tree_stats(parent);
+    parent.release_reader();
 }
 
 void UCTSearch::output_analysis(FastState & state, UCTNode & parent) {
     // We need to make a copy of the data before sorting
     auto sortable_data = std::vector<OutputAnalysisData>();
 
+    parent.acquire_reader();
     if (!parent.has_children()) {
         return;
     }
@@ -414,6 +499,7 @@ void UCTSearch::output_analysis(FastState & state, UCTNode & parent) {
         sortable_data.emplace_back(move, node->get_visits(),
                                    move_eval, policy, pv);
     }
+    parent.release_reader();
     // Sort array to decide order
     std::stable_sort(rbegin(sortable_data), rend(sortable_data));
 
@@ -429,7 +515,8 @@ void UCTSearch::output_analysis(FastState & state, UCTNode & parent) {
     gtp_printf_raw("\n");
 }
 
-void tree_stats_helper(const UCTNode& node, size_t depth,
+//should be abandoned? occupy reader for too long ...
+void tree_stats_helper(UCTNode& node, size_t depth,
                        size_t& nodes, size_t& non_leaf_nodes,
                        size_t& depth_sum, size_t& max_depth,
                        size_t& children_count) {
@@ -438,6 +525,7 @@ void tree_stats_helper(const UCTNode& node, size_t depth,
     depth_sum += depth;
     if (depth > max_depth) max_depth = depth;
 
+    node.acquire_reader();
     for (const auto& child : node.get_children()) {
         if (child.get_visits() > 0) {
             children_count += 1;
@@ -450,9 +538,10 @@ void tree_stats_helper(const UCTNode& node, size_t depth,
             if (depth+1 > max_depth) max_depth = depth+1;
         }
     }
+    node.release_reader();
 }
 
-void UCTSearch::tree_stats(const UCTNode& node) {
+void UCTSearch::tree_stats(UCTNode& node) {
     size_t nodes = 0;
     size_t non_leaf_nodes = 0;
     size_t depth_sum = 0;
@@ -650,6 +739,7 @@ std::string UCTSearch::get_pv(FastState & state, UCTNode& parent) {
         return std::string();
     }
 
+    // now can just acquire_reader, but may not worth doing it..
     if (parent.expandable()) {
         // Not fully expanded. This means someone could expand
         // the node while we want to traverse the children.
@@ -712,6 +802,7 @@ int UCTSearch::est_playouts_left(int elapsed_centis, int time_for_move) const {
 size_t UCTSearch::prune_noncontenders(int elapsed_centis, int time_for_move, bool prune) {
     auto Nfirst = 0;
 
+    m_root->acquire_reader();
     for (const auto& node : m_root->get_children()) {
         if (node->valid()) {
             Nfirst = std::max(Nfirst, (int)node->get_visits());
@@ -733,6 +824,7 @@ size_t UCTSearch::prune_noncontenders(int elapsed_centis, int time_for_move, boo
             }
         }
     }
+    m_root->release_reader();
     assert(pruned_nodes < m_root->get_children().size());
     return pruned_nodes;
 }
@@ -748,7 +840,7 @@ bool UCTSearch::have_alternate_moves(int elapsed_centis, int time_for_move) {
     m_root->acquire_reader();
     auto pruned = prune_noncontenders(elapsed_centis, time_for_move, prune);
     auto size = m_root->get_children().size();
-    m_root->release_reader(0);
+    m_root->release_reader();
     if (pruned < size - 1) {
         return true;
     }
@@ -783,56 +875,38 @@ bool UCTSearch::stop_thinking(int elapsed_centis, int time_for_move) const {
 }
 
 void UCTWorker::operator()() {
-    do {
-        //check m_run, if false, acquire lock of mutex and wait for cv.
-        //when to set m_run = true and when to set false? 
-        //when entering think() or ponder(), set true;
-        //when leaving, not nec set false; only set false when not pondering
-        //check cfg_ponder .. both in UCTSearch and in GTP?
-
-        //also change ponder's main thread to dedicate to output only
-
-        //acquire m_root_lock reader
-        //make unique rootstate; copy m_root; copy m_pending_count (pointer)
-        //increment *m_pending_count 
-        // : make sure after acquiring writer, *m_pending_count can no longer be increased
-        //release m_root_lock reader
-        //play simulation
-        //decrement *m_pending_count when returning or when backup
-
-        // update_root()
-        // acquire m_root_lock writer
-        // replace m_root, m_rootstate, m_pending_count
-        // spawn a thread to monitor the old m_pending_count until 0, then destroy old tree..
-
-        // when root hasn't been created or synced with rootstate in update_root()..
-        // if there's a possbility that the rootstate may be changed (the 'game' in GTP.cpp)
-        // then first acquire the writer ..
-        // when handing back control of gamestate from UCTSearch to GTP, always acquire_writer ..
-        // release it in update_root()
-        ++(*m_pending_count);
-        m_search->play_simulation(std::make_unique<GameState>(m_rootstate), m_root, m_thread_num);
-    } while (m_search->is_running());
+    while (!m_search->m_terminate) {
+        if (m_search->is_running()){ //&& m_search->m_network.get_max_size() > 0) {
+            m_search->acquire_reader();
+            if (m_search->m_must_run || !m_search->stop_thinking(0, 1)) {
+                auto rootstate = std::make_unique<GameState>(m_search->m_rootstate);
+                auto root = m_search->m_root.get();
+                auto pending_count = m_search->m_pending_count;
+                ++(*pending_count);
+                m_search->release_reader();
+                m_search->play_simulation(std::move(rootstate), root, pending_count, m_thread_num);
+                continue;
+            }
+            m_search->release_reader();
+        }
+        std::unique_lock<std::mutex> lk(m_search->m_mutex);
+        m_search->m_cv.wait(lk, [&]() { return m_search->m_terminate ||
+            (m_search->is_running() 
+            //&& m_search->m_network.get_max_size() > 0
+            && (m_search->m_must_run || !m_search->stop_thinking(0,1))); });
+    }
 }
 
 void UCTSearch::increment_playouts() {
     m_playouts++;
 }
 
-#ifdef USE_OPENCL
-#ifndef NDEBUG
-extern std::atomic<size_t> batch_stats[];
-#endif
-#endif
-
 int UCTSearch::think(int color, passflag_t passflag) {
     // Start counting time for us
-    m_rootstate.start_clock(color);
+    m_gtpstate.start_clock(color);
 
     // set up timing info
     Time start;
-
-    m_network.set_search(this);
 
     update_root();
     // set side to move
@@ -844,15 +918,6 @@ int UCTSearch::think(int color, passflag_t passflag) {
             color, m_rootstate.get_movenum());
 
     myprintf("Thinking at most %.1f seconds...\n", time_for_move/100.0f);
-
-    m_run = true; 
-
-    int cpus = cfg_num_threads;
-    ThreadGroup tg(thread_pool);
-    for (int i = 1; i <= cpus; i++) {
-        tg.add_task(UCTWorker(m_rootstate, this, m_root.get(), m_pending_backups, i));
-    }
-
     auto keeprunning = true;
     auto last_update = 0;
     auto last_output = 0;
@@ -883,19 +948,17 @@ int UCTSearch::think(int color, passflag_t passflag) {
     } while (keeprunning);
 
     // stop the search
-    m_run = false;
-    std::unique_lock<std::mutex> lk0(m_network.get_queue_mutex());
-    m_network.notify();
-    lk0.unlock();
-    // below can move to update_root()
-    tg.wait_all();
+    // m_run = false; // set in GTP.cpp, depending on --noponder or not
+    m_must_run = false;
 
+    m_root->acquire_reader();
     // reactivate all pruned root children
     for (const auto& node : m_root->get_children()) {
         node->set_active(true);
     }
+    m_root->release_reader();
 
-    m_rootstate.stop_clock(color);
+    m_gtpstate.stop_clock(color);
     if (!m_root->has_children()) {
         return FastBoard::PASS;
     }
@@ -907,8 +970,10 @@ int UCTSearch::think(int color, passflag_t passflag) {
 
     Time elapsed;
     int elapsed_centis = Time::timediff_centis(start, elapsed);
+    myprintf("sizeof(UCTNode) is %d\n", sizeof(UCTNode));
+    myprintf("sizeof(UCTNodePointer) is %d\n", sizeof(UCTNodePointer));
     if (elapsed_centis+1 > 0) {
-        myprintf("%7.2f visits, %d nodes, %d inflated, %d playouts, %.0f n/s, %.0f pos/s\n\n",
+        myprintf("%7.2f visits, %u nodes, %u inflated, %d playouts, %.0f n/s, %.0f pos/s\n\n",
                  m_root->get_visits(),
             UCTNodePointer::m_nodes.load(), UCTNodePointer::m_inflated_nodes.load(),
                  m_playouts.load(),
@@ -918,17 +983,15 @@ int UCTSearch::think(int color, passflag_t passflag) {
         m_network.nncache_dump_stats();
 #ifdef ACCUM_DEBUG
         myprintf("failed simulations: %u\n", failed_simulations.load());
-        myprintf("max pending backups: %u\n", max_pending_backups.load());
-        myprintf("max pending with multiplicities: %u\n", max_pending_w_mult.load());
         myprintf("max leaf vl multiplicity: %u\n", max_leaf_vl.load());
         myprintf("max vl multiplicity: %u\n", max_vl.load());
-        myprintf("pending backups: %u\n", m_pending_backups->load());
+        myprintf("max pending backups: %u\n", max_pending_backups.load());
+        myprintf("max pending with multiplicities: %u\n", max_pending_w_mult.load());
+        myprintf("pending backups: %u\n", pending_backups.load());
+        myprintf("max pending netresults: %u\n", max_pending_netresults.load());
+        myprintf("min pending netresults: %u\n", min_pending_netresults.load());
+        myprintf("pending netresults: %u\n", pending_netresults.load());
         //myprintf("%s", m_debug_string.c_str());
-#endif
-#ifdef USE_OPENCL
-#ifndef NDEBUG
-        myprintf("batch stats: %d %d\n", batch_stats[0].load(), batch_stats[1].load());
-#endif
 #endif
     }
     int bestmove = get_best_move(passflag);
@@ -939,20 +1002,22 @@ int UCTSearch::think(int color, passflag_t passflag) {
 }
 
 void UCTSearch::ponder() {
-    m_network.set_search(this);
     update_root();
 
-    m_run = true;
-
-    ThreadGroup tg(thread_pool);
-    for (int i = 1; i < cfg_num_threads; i++) {
-        tg.add_task(UCTWorker(m_rootstate, this, m_root.get(), m_pending_backups, i));
-    }
     Time start;
     auto keeprunning = true;
     auto last_output = 0;
     do {
-        play_simulation(std::make_unique<GameState>(m_rootstate), m_root.get(), 0);
+        if (is_running() && m_network.get_max_size() > 0) {
+            acquire_reader();
+            auto rootstate = std::make_unique<GameState>(m_rootstate);
+            auto root = m_root.get();
+            auto pending_count = m_pending_count;
+            ++(*pending_count);
+            release_reader();
+            play_simulation(std::move(rootstate), root, pending_count, 0);
+        }
+
         if (cfg_analyze_interval_centis) {
             Time elapsed;
             int elapsed_centis = Time::timediff_centis(start, elapsed);
@@ -966,25 +1031,26 @@ void UCTSearch::ponder() {
     } while (!Utils::input_pending() && keeprunning);
 
     // stop the search
-    m_run = false;
-    std::unique_lock<std::mutex> lk0(m_network.get_queue_mutex());
-    m_network.notify();
-    lk0.unlock();
-    tg.wait_all();
+    m_run = keeprunning;
+    m_must_run = false;
 
     // display search info
     myprintf("\n");
     dump_stats(m_rootstate, *m_root);
 
-    myprintf("\n%d visits, %d nodes, %d inflated\n\n", m_root->get_visits(), 
+    myprintf("\n%7.2f visits, %u nodes, %u inflated\n\n", m_root->get_visits(), 
         UCTNodePointer::m_nodes.load(), UCTNodePointer::m_inflated_nodes.load());
     m_network.nncache_dump_stats();
 #ifdef ACCUM_DEBUG
     myprintf("failed simulations: %u\n", failed_simulations.load());
-    myprintf("max pending backups: %u\n", max_pending_backups.load());
-    myprintf("max pending with multiplicities: %u\n", max_pending_w_mult.load());
     myprintf("max leaf vl multiplicity: %u\n", max_leaf_vl.load());
     myprintf("max vl multiplicity: %u\n", max_vl.load());
+    myprintf("max pending backups: %u\n", max_pending_backups.load());
+    myprintf("max pending with multiplicities: %u\n", max_pending_w_mult.load());
+    myprintf("pending backups: %u\n", pending_backups.load());
+    myprintf("max pending netresults: %u\n", max_pending_netresults.load());
+    myprintf("min pending netresults: %u\n", min_pending_netresults.load());
+    myprintf("pending netresults: %u\n", pending_netresults.load());
 #endif
     // Copy the root state. Use to check for tree re-use in future calls.
     m_last_rootstate = std::make_unique<GameState>(m_rootstate);

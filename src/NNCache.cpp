@@ -31,7 +31,8 @@ const size_t NNCache::ENTRY_SIZE;
 
 NNCache::NNCache(int size) : m_size(size) {}
 
-std::shared_ptr<NNCache::Entry> NNCache::lookup_and_insert(std::uint64_t hash, bool insert, bool lookup, BackupData& bd) {
+std::shared_ptr<NNCache::Entry> NNCache::lookup_and_insert(std::uint64_t hash, 
+    bool insert, bool lookup, BackupData& bd, bool& ready) {
     // !lookup implies insert
 
     if (lookup) {
@@ -40,8 +41,16 @@ std::shared_ptr<NNCache::Entry> NNCache::lookup_and_insert(std::uint64_t hash, b
         if (iter != m_cache.end()) {
             ++m_hits;
             auto result = iter->second;
-            if (!result->ready) {
+            bool expected = false;
+            if (result->ready.compare_exchange_strong(expected, true)) {
+                result->num_mods++;
                 result->backup_obligations.emplace_back(std::move(bd));
+                result->ready = false;
+                //expected = true;
+                //if (!result->ready.compare_exchange_strong(expected, false)) { Utils::myprintf("Strange ready status!\n"); }
+            }
+            else {
+                ready = true;
             }
             return result;
         }
@@ -55,7 +64,23 @@ std::shared_ptr<NNCache::Entry> NNCache::lookup_and_insert(std::uint64_t hash, b
             m_order.pop_front();
         }
         auto result = std::make_shared<Entry>();
+
+        bool expected = false;
+        if (result->ready.compare_exchange_strong(expected, true)) {
+            result->num_mods++;
+            result->backup_obligations.emplace_back(std::move(bd));
+            result->ready.store(false);
+            //expected = true;
+            //if (!result->ready.compare_exchange_strong(expected, false)) { Utils::myprintf("Strange ready status!\n"); }
+        }
+        else {
+            ready = true;
+        }
+        /*
+        result->ready.store(true);
         result->backup_obligations.emplace_back(std::move(bd));
+        result->ready.store(false);
+        */
         m_cache.emplace(hash, result);
         m_order.push_back(hash);
         ++m_inserts;
@@ -89,6 +114,7 @@ void NNCache::set_size_from_playouts(int max_playouts) {
                  UCTSearch::UNLIMITED_PLAYOUTS / num_cache_moves);
     auto max_size = num_cache_moves * max_playouts_per_move;
     max_size = std::min(MAX_CACHE_COUNT, std::max(MIN_CACHE_COUNT, max_size));
+    m_cache.reserve(max_size);
     resize(max_size);
 }
 

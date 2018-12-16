@@ -46,7 +46,7 @@ public:
 
     void create_children(Network::Netresult& raw_netlist,
                           int symmetry,
-                          GameState& state,
+                          const GameState& state,
                           float min_psa_ratio = 0.0f);
 
     const std::vector<UCTNodePointer>& get_children() const;
@@ -77,8 +77,8 @@ public:
     void randomize_first_proportionally();
     void prepare_root_node(GameState& state);
 
-    UCTNode* get_first_child() const;
-    UCTNode* get_nopass_child(FastState& state) const;
+    UCTNode* get_first_child();
+    UCTNode* get_nopass_child(FastState& state);
     std::unique_ptr<UCTNode> find_child(const int move);
     void inflate_all_children();
 
@@ -92,7 +92,7 @@ public:
     };
 
     void acquire_reader();
-    void release_reader(uint32_t vl, bool incr = false);
+    void release_reader(uint32_t vl = 0, bool incr = false);
     bool pre_acquire_writer();
     void acquire_writer();
     void release_writer();

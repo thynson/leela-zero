@@ -46,7 +46,7 @@ UCTNode::UCTNode(int vertex, float policy) : m_move(vertex), m_policy(policy) {
 }
 
 bool UCTNode::first_visit() const {
-    return m_visits == 0;
+    return m_visits == 0.0;
 }
 
 std::array<std::array<int, NUM_INTERSECTIONS>,
@@ -54,9 +54,10 @@ std::array<std::array<int, NUM_INTERSECTIONS>,
 
 void UCTNode::create_children(Network::Netresult& raw_netlist0,
                                int symmetry,
-                               GameState& state, 
+                               const GameState& state, 
                                float min_psa_ratio) {
     if (!expandable(min_psa_ratio)) {
+        acquire_writer();
         return;
     }
 
@@ -124,6 +125,8 @@ void UCTNode::link_nodelist(std::vector<Network::PolicyVertexPair>& nodelist,
     const auto max_psa = nodelist[0].first;
     const auto old_min_psa = max_psa * m_min_psa_ratio_children;
     const auto new_min_psa = max_psa * min_psa_ratio;
+
+    acquire_writer();
     if (new_min_psa > 0.0f) {
         m_children.reserve(
             std::count_if(cbegin(nodelist), cend(nodelist),
@@ -176,13 +179,6 @@ bool UCTNode::has_children() const {
 }
 
 bool UCTNode::expandable(const float min_psa_ratio) const {
-#ifndef NDEBUG
-    if (m_min_psa_ratio_children == 0.0f) {
-        // If we figured out that we are fully expandable
-        // it is impossible that we stay in INITIAL state.
-        assert(m_expand_state.load() != ExpandState::INITIAL);
-    }
-#endif
     return min_psa_ratio < m_min_psa_ratio_children;
 }
 
@@ -279,7 +275,7 @@ float factor(float q_c, float p_c, float v_c, float q_a, float p_a, float v_a, f
 }
 
 std::pair<UCTNode*, float> UCTNode::uct_select_child(int color, bool is_root) {
-
+    // add (float) everywhere in front of visits..
     /*
     // Count parentvisits manually to avoid issues with transpositions.
     auto parentvisits = 0.0;
@@ -441,38 +437,42 @@ public:
     NodeComp(int color) : m_color(color) {};
     bool operator()(const UCTNodePointer& a,
                     const UCTNodePointer& b) {
+
+        auto a_visits = a.get_visits();
+        auto b_visits = b.get_visits();
+
         // if visits are not same, sort on visits
-        if (a.get_visits() != b.get_visits()) {
-            return a.get_visits() < b.get_visits();
+        if (a_visits!= b_visits) {
+            return a_visits < b_visits;
         }
 
         // neither has visits, sort on policy prior
-        if (a.get_visits() == 0) {
+        if (a_visits == 0) {
             return a.get_policy() < b.get_policy();
         }
 
         // both have same non-zero number of visits
-        return a.get_eval(m_color) < b.get_eval(m_color);
+        return a.get_raw_eval(m_color) < b.get_raw_eval(m_color);
     }
 private:
     int m_color;
 };
 
 void UCTNode::sort_children(int color) {
+    while (!pre_acquire_writer()) {}
+    acquire_writer();
     std::stable_sort(rbegin(m_children), rend(m_children), NodeComp(color));
+    release_writer();
 }
 
 UCTNode& UCTNode::get_best_root_child(int color, bool running) {
     acquire_reader();
 
-    // acquire_reader of m_root .. 
-    // to delete the root, need to acquire_writer of m_pre_root..
-
     assert(!m_children.empty());
 
     auto ret = std::max_element(begin(m_children), end(m_children),
                                 NodeComp(color));
-    release_reader(0);
+    release_reader();
     ret->inflate();
 
     return *(ret->get());
@@ -515,6 +515,7 @@ float UCTNode::get_min_psa_ratio() {
 }
 
 void UCTNode::acquire_reader() {
+    //myprintf("%d acquire\n", m_lock.load());
     while (true) {
         if (m_lock >= 170) { continue; }
         if (m_lock.fetch_add(1) >= 170) {
@@ -527,12 +528,14 @@ void UCTNode::acquire_reader() {
 }
 
 void UCTNode::release_reader(uint32_t vl, bool incr) {
+    //myprintf("%d release\n", m_lock.load());
     if (incr) { virtual_loss(vl); }
     else { virtual_loss_undo(vl); }
     --m_lock;
 }
 
 bool UCTNode::pre_acquire_writer() {
+    //myprintf("%d pre-acquire\n", m_lock.load());
     std::uint8_t expected;
     do {
         expected = m_lock;
@@ -540,13 +543,13 @@ bool UCTNode::pre_acquire_writer() {
             return false;
         }
     } while (!m_lock.compare_exchange_strong(expected, 86 + expected));
-    virtual_loss();
     return true;
 }
 // readers can still come in, but not other writers (if success)
 // long time gap (NN eval) before writer privilege actually needed
 
 void UCTNode::acquire_writer() {
+    //myprintf("%d acquire-writer\n", m_lock.load());
     m_lock += 85;
     while (m_lock != 171) {}
 }
@@ -556,6 +559,7 @@ void UCTNode::acquire_writer() {
 // can now undo all virtual loss at this node (and matching amount from each ancestor)
 
 void UCTNode::release_writer() {
+    //myprintf("%d release-writer\n", m_lock.load());
     m_lock -= 171;
 }
 
@@ -575,16 +579,20 @@ UCTNode::Action UCTNode::get_action(bool is_root) {
         auto lock = m_lock.load();
         if (lock >= 170) { continue; }
         if (lock < 85 &&
-            (m_visits == 0.0 || expandable(is_root ? 0.0 : get_min_psa_ratio())) &&
+            (m_visits == 0.0 || is_root || expandable(get_min_psa_ratio())) &&
             pre_acquire_writer()) {
+            virtual_loss();
             return WRITE;
         }
+        is_root = false;
         lock = m_lock.fetch_add(1);
         if (lock >= 170) { --m_lock; continue; }
+        //myprintf("%d get-action\n", lock);
         virtual_loss();
         if (has_children()) { while (m_visits == 0.0) {}; return READ; }
         else {
-            if (lock >= 85) { release_reader(0); return FAIL; }
+            release_reader();
+            if (lock >= 85) { return FAIL; }
             else { myprintf("No children due to low memory!\n"); return BACKUP; }
         }
     }

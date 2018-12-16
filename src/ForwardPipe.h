@@ -66,6 +66,7 @@ public:
     Network* m_network;
     std::mutex m_mutex;
     std::condition_variable m_cv0;
+    std::atomic<int> m_max_queue_size{0};
 };
 
 #endif

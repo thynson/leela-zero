@@ -76,7 +76,9 @@ public:
     struct Entry {
         //Entry(const Netresult& r)
         //    : result(r) {}
-        bool ready{false};
+        std::atomic<bool> ready{false};
+        int num_mods{0};
+        //std::mutex m_mutex;
         Netresult result;  // ~ 1.4KiB
         std::vector<BackupData> backup_obligations;
     };
@@ -86,8 +88,10 @@ public:
         + sizeof(std::uint64_t)
         + sizeof(std::shared_ptr<Entry>);
 
-    std::shared_ptr<Entry> lookup_and_insert(std::uint64_t hash, bool insert, bool lookup, BackupData& bd);
+    std::shared_ptr<Entry> lookup_and_insert(std::uint64_t hash, 
+        bool insert, bool lookup, BackupData& bd, bool& ready);
     std::mutex m_mutex;
+    //std::atomic<uint8_t> m_lock;
 private:
     
     size_t m_size;

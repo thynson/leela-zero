@@ -100,6 +100,7 @@ public:
     void nncache_dump_stats() { m_nncache.dump_stats(); }
     void nncache_clear();
 
+    int get_max_size() { return m_forward->m_max_queue_size.load(); }
     void set_search(UCTSearch* search) { m_search = m_forward->m_search = search; m_forward->m_network = this; }
     std::mutex& get_queue_mutex() { return m_forward->m_mutex; }
     void notify() { m_forward->m_cv0.notify_all(); }
