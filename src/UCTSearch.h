@@ -39,23 +39,25 @@ public:
     SearchResult() = default;
     bool valid() const { return m_valid;  }
     float eval() const { return m_eval;  }
-    static SearchResult from_eval(float eval) {
-        return SearchResult(eval);
+    float probability() const { return m_probability; }
+    static SearchResult from_eval(float eval, float net_score) {
+        return SearchResult(eval, net_score);
     }
-    static SearchResult from_score(float board_score) {
+    static SearchResult from_score(float board_score, float policy) {
         if (board_score > 0.0f) {
-            return SearchResult(1.0f);
+            return SearchResult(1.0f, policy);
         } else if (board_score < 0.0f) {
-            return SearchResult(0.0f);
+            return SearchResult(0.0f, policy);
         } else {
-            return SearchResult(0.5f);
+            return SearchResult(0.5f, policy);
         }
     }
 private:
-    explicit SearchResult(float eval)
-        : m_valid(true), m_eval(eval) {}
+    explicit SearchResult(float eval, float probability)
+        : m_valid(true), m_eval(eval), m_probability(probability) {}
     bool m_valid{false};
     float m_eval{0.0f};
+    float m_probability{0.0f};
 };
 
 namespace TimeManagement {
@@ -103,7 +105,7 @@ public:
     void ponder();
     bool is_running() const;
     void increment_playouts();
-    SearchResult play_simulation(GameState& currstate, UCTNode* const node);
+    SearchResult play_simulation(GameState& currstate, UCTNode* const node, float parent_net_eval);
 
 private:
     float get_min_psa_ratio() const;
@@ -138,13 +140,14 @@ private:
 
 class UCTWorker {
 public:
-    UCTWorker(GameState & state, UCTSearch * search, UCTNode * root)
-      : m_rootstate(state), m_search(search), m_root(root) {}
+    UCTWorker(GameState & state, UCTSearch * search, UCTNode * root, float parent_net_eval)
+      : m_rootstate(state), m_search(search), m_root(root), m_parent_net_eval(parent_net_eval){}
     void operator()();
 private:
     GameState & m_rootstate;
     UCTSearch * m_search;
     UCTNode * m_root;
+    float m_parent_net_eval;
 };
 
 #endif

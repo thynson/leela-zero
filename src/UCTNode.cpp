@@ -168,9 +168,10 @@ void UCTNode::virtual_loss_undo() {
     m_virtual_loss -= VIRTUAL_LOSS_COUNT;
 }
 
-void UCTNode::update(float eval) {
+void UCTNode::update(float eval, float score) {
     m_visits++;
     accumulate_eval(eval);
+    accumulate_score(score);
 }
 
 bool UCTNode::has_children() const {
@@ -190,6 +191,10 @@ bool UCTNode::expandable(const float min_psa_ratio) const {
 
 float UCTNode::get_policy() const {
     return m_policy;
+}
+
+double UCTNode::get_policy_sum() const {
+    return m_policy_sum;
 }
 
 void UCTNode::set_policy(float policy) {
@@ -234,6 +239,10 @@ double UCTNode::get_blackevals() const {
 
 void UCTNode::accumulate_eval(float eval) {
     atomic_add(m_blackevals, double(eval));
+}
+
+void UCTNode::accumulate_score(float psa) {
+    atomic_add(m_policy_sum, double(psa));
 }
 
 UCTNode* UCTNode::uct_select_child(int color, bool is_root) {

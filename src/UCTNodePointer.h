@@ -117,6 +117,7 @@ public:
     // constructing UCTNode
     bool valid() const;
     int get_visits() const;
+    double get_policy_sum() const;
     float get_policy() const;
     bool active() const;
     int get_move() const;
