@@ -27,6 +27,7 @@ find_package(Boost 1.58.0 REQUIRED program_options filesystem)
 find_package(Threads REQUIRED)
 find_package(ZLIB REQUIRED)
 find_package(OpenCL REQUIRED)
+find_package(Eigen3 3.3 REQUIRED NO_MODULE)
 # We need OpenBLAS for now, because we make some specific
 # calls. Ideally we'd use OpenBLAS is possible and fall back to
 # not doing those calls if it's not present.
@@ -107,6 +108,7 @@ list(REMOVE_ITEM leelaz_SRC ${leelaz_MAIN})
 
 # Reuse for leelaz and gtest
 add_library(objs OBJECT ${leelaz_SRC})
+target_link_libraries(objs Eigen3::Eigen)
 
 add_executable(leelaz $<TARGET_OBJECTS:objs> ${leelaz_MAIN})
 
