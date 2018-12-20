@@ -75,14 +75,16 @@ public:
     int get_move() const;
     int get_visits() const;
     float get_policy() const;
+    double get_policy_sum() const;
     void set_policy(float policy);
     float get_eval_variance(float default_var = 0.0f) const;
     float get_eval(int tomove) const;
+    double get_raw_eval_sum(int tomove) const;
     float get_raw_eval(int tomove, int virtual_loss = 0) const;
     float get_net_eval(int tomove) const;
     void virtual_loss();
     void virtual_loss_undo();
-    void update(float eval);
+    void update(float eval, float score);
     float get_eval_lcb(int color) const;
 
     // Defined in UCTNodeRoot.cpp, only to be called on m_root in UCTSearch
@@ -109,6 +111,7 @@ private:
     double get_blackevals() const;
     void accumulate_eval(float eval);
     void kill_superkos(const GameState& state);
+    void accumulate_score(float psa);
     void dirichlet_noise(float epsilon, float alpha);
 
     // Note : This class is very size-sensitive as we are going to create
@@ -120,6 +123,7 @@ private:
     // UCT
     std::atomic<std::int16_t> m_virtual_loss{0};
     std::atomic<int> m_visits{0};
+    std::atomic<double> m_policy_sum{0.0};
     // UCT eval
     float m_policy;
     // Original net eval for this node (not children).

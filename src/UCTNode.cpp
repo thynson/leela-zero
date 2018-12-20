@@ -202,13 +202,14 @@ void UCTNode::virtual_loss_undo() {
     m_virtual_loss -= VIRTUAL_LOSS_COUNT;
 }
 
-void UCTNode::update(float eval) {
+void UCTNode::update(float eval, float score) {
     // Cache values to avoid race conditions.
     auto old_eval = static_cast<float>(m_blackevals);
     auto old_visits = static_cast<int>(m_visits);
     auto old_delta = old_visits > 0 ? eval - old_eval / old_visits : 0.0f;
     m_visits++;
     accumulate_eval(eval);
+    accumulate_score(score);
     auto new_delta = eval - (old_eval + eval) / (old_visits + 1);
     // Welford's online algorithm for calculating variance.
     auto delta = old_delta * new_delta;
@@ -232,6 +233,10 @@ bool UCTNode::expandable(const float min_psa_ratio) const {
 
 float UCTNode::get_policy() const {
     return m_policy;
+}
+
+double UCTNode::get_policy_sum() const {
+    return m_policy_sum;
 }
 
 void UCTNode::set_policy(float policy) {
@@ -262,17 +267,25 @@ float UCTNode::get_eval_lcb(int color) const {
 }
 
 float UCTNode::get_raw_eval(int tomove, int virtual_loss) const {
-    auto visits = get_visits() + virtual_loss;
-    assert(visits > 0);
+//    auto visits = get_visits() + virtual_loss;
+//    assert(visits > 0);
     auto blackeval = get_blackevals();
     if (tomove == FastBoard::WHITE) {
         blackeval += static_cast<double>(virtual_loss);
     }
-    auto eval = static_cast<float>(blackeval / double(visits));
+    auto eval = static_cast<float>(blackeval / (m_policy_sum + virtual_loss));
     if (tomove == FastBoard::WHITE) {
         eval = 1.0f - eval;
     }
     return eval;
+}
+
+double UCTNode::get_raw_eval_sum(int tomove) const {
+    double result = get_blackevals();
+    if (tomove == FastBoard::WHITE) {
+        result = m_policy_sum - result;
+    }
+    return result;
 }
 
 float UCTNode::get_eval(int tomove) const {
@@ -297,24 +310,30 @@ void UCTNode::accumulate_eval(float eval) {
     atomic_add(m_blackevals, double(eval));
 }
 
+void UCTNode::accumulate_score(float psa) {
+    atomic_add(m_policy_sum, double(psa));
+}
+
 UCTNode* UCTNode::uct_select_child(int color, bool is_root) {
     wait_expanded();
 
     // Count parentvisits manually to avoid issues with transpositions.
     auto total_visited_policy = 0.0f;
     auto parentvisits = size_t{0};
+    auto numerator = sqrt(1.0 + get_policy_sum()) - 1.0; //
     for (const auto& child : m_children) {
         if (child.valid()) {
             parentvisits += child.get_visits();
             if (child.get_visits() > 0) {
                 total_visited_policy += child.get_policy();
+//                numerator += child.get_visits() - child.get_policy_sum();
             }
         }
     }
 
-    const auto numerator = std::sqrt(double(parentvisits) *
-            std::log(cfg_logpuct * double(parentvisits) + cfg_logconst));
-    const auto fpu_reduction = (is_root ? cfg_fpu_root_reduction : cfg_fpu_reduction) * std::sqrt(total_visited_policy);
+//    numerator = sqrt(numerator);
+    const auto fpu_reduction = (is_root ? cfg_fpu_root_reduction : cfg_fpu_reduction)
+            * total_visited_policy * total_visited_policy;
     // Estimated eval for unknown nodes = original parent NN eval - reduction
     const auto fpu_eval = get_net_eval(color) - fpu_reduction;
 
@@ -327,16 +346,21 @@ UCTNode* UCTNode::uct_select_child(int color, bool is_root) {
         }
 
         auto winrate = fpu_eval;
+        auto denom = 1.0; //1.0;//(1.0 - get_policy() + child.get_policy_sum());
         if (child.is_inflated() && child->m_expand_state.load() == ExpandState::EXPANDING) {
             // Someone else is expanding this node, never select it
             // if we can avoid so, because we'd block on it.
             winrate = -1.0f - fpu_reduction;
         } else if (child.get_visits() > 0) {
             winrate = child.get_eval(color);
+            denom += child.get_policy_sum();
+//        } else {
+
+//            denom += 1.0 - child.get_policy();
+//            denom += (1-total_visited_policy) * (1-child.get_policy()) + total_visited_policy;
         }
         const auto psa = child.get_policy();
-        const auto denom = 1.0 + child.get_visits();
-        const auto puct = cfg_puct * psa * (numerator / denom);
+        const auto puct = cfg_puct * psa * numerator / denom;
         const auto value = winrate + puct;
         assert(value > std::numeric_limits<double>::lowest());
 
@@ -361,37 +385,34 @@ public:
     // contexts (e.g., UCTSearch::get_pv()) so beware of race conditions
     bool operator()(const UCTNodePointer& a,
                     const UCTNodePointer& b) {
-        auto a_visit = a.get_visits();
-        auto b_visit = b.get_visits();
-
-        // Need at least 2 visits for LCB.
-        if (m_lcb_min_visits < 2) {
-            m_lcb_min_visits = 2;
-        }
-
-        // Calculate the lower confidence bound for each node.
-        if ((a_visit > m_lcb_min_visits) && (b_visit > m_lcb_min_visits)) {
-            auto a_lcb = a.get_eval_lcb(m_color);
-            auto b_lcb = b.get_eval_lcb(m_color);
-
-            // Sort on lower confidence bounds
-            if (a_lcb != b_lcb) {
-                return a_lcb < b_lcb;
+        if (a.get_visits() == 0) {
+            if (b.get_visits() == 0)
+                return a.get_policy() < b.get_policy();
+            return true;
+        } else if (b.get_visits() == 0) {
+            return false;
+        } else {
+            auto a_policy_sum = a.get_raw_eval_sum(m_color), b_policy_sum = b.get_raw_eval_sum(m_color);
+            if (a_policy_sum != b_policy_sum) {
+                return a_policy_sum < b_policy_sum;
             }
-        }
-
-        // if visits are not same, sort on visits
-        if (a_visit != b_visit) {
-            return a_visit < b_visit;
-        }
-
-        // neither has visits, sort on policy prior
-        if (a_visit == 0) {
             return a.get_policy() < b.get_policy();
         }
 
-        // both have same non-zero number of visits
-        return a.get_eval(m_color) < b.get_eval(m_color);
+//        if (a.get_raw_eval_sum(m_color) != b.get_raw_eval_sum(m_color)) {
+//        }
+////        // if visits are not same, sort on visits
+////        if (a.get_visits() != b.get_visits()) {
+////            return a.get_visits() < b.get_visits();
+////        }
+//
+//        // neither has visits, sort on policy prior
+//        if (a.get_visits() == 0) {
+//            return a.get_policy() < b.get_policy();
+//        }
+//
+//        // both have same non-zero number of visits
+//        return a.get_eval(m_color) < b.get_eval(m_color);
     }
 private:
     int m_color;
