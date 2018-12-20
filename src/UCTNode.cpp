@@ -168,9 +168,10 @@ void UCTNode::virtual_loss_undo() {
     m_virtual_loss -= VIRTUAL_LOSS_COUNT;
 }
 
-void UCTNode::update(float eval) {
+void UCTNode::update(float eval, float score) {
     m_visits++;
     accumulate_eval(eval);
+    accumulate_score(score);
 }
 
 bool UCTNode::has_children() const {
@@ -192,6 +193,10 @@ float UCTNode::get_policy() const {
     return m_policy;
 }
 
+double UCTNode::get_policy_sum() const {
+    return m_policy_sum;
+}
+
 void UCTNode::set_policy(float policy) {
     m_policy = policy;
 }
@@ -201,17 +206,25 @@ int UCTNode::get_visits() const {
 }
 
 float UCTNode::get_raw_eval(int tomove, int virtual_loss) const {
-    auto visits = get_visits() + virtual_loss;
-    assert(visits > 0);
+//    auto visits = get_visits() + virtual_loss;
+//    assert(visits > 0);
     auto blackeval = get_blackevals();
     if (tomove == FastBoard::WHITE) {
         blackeval += static_cast<double>(virtual_loss);
     }
-    auto eval = static_cast<float>(blackeval / double(visits));
+    auto eval = static_cast<float>(blackeval / (m_policy_sum + virtual_loss));
     if (tomove == FastBoard::WHITE) {
         eval = 1.0f - eval;
     }
     return eval;
+}
+
+double UCTNode::get_raw_eval_sum(int tomove) const {
+    double result = get_blackevals();
+    if (tomove == FastBoard::WHITE) {
+        result = m_policy_sum - result;
+    }
+    return result;
 }
 
 float UCTNode::get_eval(int tomove) const {
@@ -236,23 +249,30 @@ void UCTNode::accumulate_eval(float eval) {
     atomic_add(m_blackevals, double(eval));
 }
 
+void UCTNode::accumulate_score(float psa) {
+    atomic_add(m_policy_sum, double(psa));
+}
+
 UCTNode* UCTNode::uct_select_child(int color, bool is_root) {
     wait_expanded();
 
     // Count parentvisits manually to avoid issues with transpositions.
     auto total_visited_policy = 0.0f;
     auto parentvisits = size_t{0};
+    auto numerator = sqrt(1.0 + get_policy_sum()) - 1.0; //
     for (const auto& child : m_children) {
         if (child.valid()) {
             parentvisits += child.get_visits();
             if (child.get_visits() > 0) {
                 total_visited_policy += child.get_policy();
+//                numerator += child.get_visits() - child.get_policy_sum();
             }
         }
     }
 
-    const auto numerator = std::sqrt(double(parentvisits));
-    const auto fpu_reduction = (is_root ? cfg_fpu_root_reduction : cfg_fpu_reduction) * std::sqrt(total_visited_policy);
+//    numerator = sqrt(numerator);
+    const auto fpu_reduction = (is_root ? cfg_fpu_root_reduction : cfg_fpu_reduction)
+            * total_visited_policy * total_visited_policy;
     // Estimated eval for unknown nodes = original parent NN eval - reduction
     const auto fpu_eval = get_net_eval(color) - fpu_reduction;
 
@@ -265,16 +285,21 @@ UCTNode* UCTNode::uct_select_child(int color, bool is_root) {
         }
 
         auto winrate = fpu_eval;
+        auto denom = 1.0; //1.0;//(1.0 - get_policy() + child.get_policy_sum());
         if (child.is_inflated() && child->m_expand_state.load() == ExpandState::EXPANDING) {
             // Someone else is expanding this node, never select it
             // if we can avoid so, because we'd block on it.
             winrate = -1.0f - fpu_reduction;
         } else if (child.get_visits() > 0) {
             winrate = child.get_eval(color);
+            denom += child.get_policy_sum();
+//        } else {
+
+//            denom += 1.0 - child.get_policy();
+//            denom += (1-total_visited_policy) * (1-child.get_policy()) + total_visited_policy;
         }
         const auto psa = child.get_policy();
-        const auto denom = 1.0 + child.get_visits();
-        const auto puct = cfg_puct * psa * (numerator / denom);
+        const auto puct = cfg_puct * psa * numerator / denom;
         const auto value = winrate + puct;
         assert(value > std::numeric_limits<double>::lowest());
 
@@ -295,18 +320,34 @@ public:
     NodeComp(int color) : m_color(color) {};
     bool operator()(const UCTNodePointer& a,
                     const UCTNodePointer& b) {
-        // if visits are not same, sort on visits
-        if (a.get_visits() != b.get_visits()) {
-            return a.get_visits() < b.get_visits();
-        }
-
-        // neither has visits, sort on policy prior
         if (a.get_visits() == 0) {
+            if (b.get_visits() == 0)
+                return a.get_policy() < b.get_policy();
+            return true;
+        } else if (b.get_visits() == 0) {
+            return false;
+        } else {
+            auto a_policy_sum = a.get_raw_eval_sum(m_color), b_policy_sum = b.get_raw_eval_sum(m_color);
+            if (a_policy_sum != b_policy_sum) {
+                return a_policy_sum < b_policy_sum;
+            }
             return a.get_policy() < b.get_policy();
         }
 
-        // both have same non-zero number of visits
-        return a.get_eval(m_color) < b.get_eval(m_color);
+//        if (a.get_raw_eval_sum(m_color) != b.get_raw_eval_sum(m_color)) {
+//        }
+////        // if visits are not same, sort on visits
+////        if (a.get_visits() != b.get_visits()) {
+////            return a.get_visits() < b.get_visits();
+////        }
+//
+//        // neither has visits, sort on policy prior
+//        if (a.get_visits() == 0) {
+//            return a.get_policy() < b.get_policy();
+//        }
+//
+//        // both have same non-zero number of visits
+//        return a.get_eval(m_color) < b.get_eval(m_color);
     }
 private:
     int m_color;
