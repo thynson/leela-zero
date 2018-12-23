@@ -213,25 +213,26 @@ SearchResult UCTSearch::play_simulation(GameState & currstate,
     node->virtual_loss();
 
     if (node->expandable()) {
+        float eval;
         if (currstate.get_passes() >= 2) {
-            auto score = currstate.final_score();
+            eval = currstate.final_score();
             result = SearchResult::from_score(
-                    (1.0f + node->get_policy()) * score - node->get_policy() * parent_net_eval,
-                    node->get_policy());
+                    eval,
+                    1.0f - node->get_policy());
         } else {
-            float eval;
+//            float eval;
             const auto had_children = node->has_children();
             const auto success =
                 node->create_children(m_network, m_nodes, currstate, eval,
                                       get_min_psa_ratio());
             if (!had_children && success) {
                 result = SearchResult::from_eval(
-//                        eval,
-                        (1.0f + node->get_policy()) * eval - node->get_policy() * parent_net_eval,
-                        node->get_policy());
+                        eval - node->get_policy() * parent_net_eval,
+//                        (1.0f + node->get_policy()) * eval - node->get_policy() * parent_net_eval,
+                        1.0f - node->get_policy());
             }
         }
-        node->update(result.eval(), 0.0);
+        node->update(eval, 1.0f);
         node->virtual_loss_undo();
         return result;
     }
@@ -246,11 +247,13 @@ SearchResult UCTSearch::play_simulation(GameState & currstate,
         } else {
             result = play_simulation(currstate, next, node->get_net_eval(FastBoard::BLACK));
         }
+
+
+        if (result.valid()) {
+            node->update(result.eval(), result.probability());
+        }
     }
 
-    if (result.valid()) {
-        node->update(result.eval(), result.probability());
-    }
     node->virtual_loss_undo();
 
     return result;

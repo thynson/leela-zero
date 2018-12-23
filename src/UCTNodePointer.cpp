@@ -127,6 +127,13 @@ double UCTNodePointer::get_policy_sum() const {
     return 0.0;
 }
 
+double UCTNodePointer::get_raw_eval_sum(int tomove) const {
+
+    auto v = m_data.load();
+    if (is_inflated(v)) return read_ptr(v)->get_raw_eval_sum(tomove);
+    return 0.0;
+}
+
 float UCTNodePointer::get_policy() const {
     auto v = m_data.load();
     if (is_inflated(v)) return read_ptr(v)->get_policy();

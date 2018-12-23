@@ -206,17 +206,25 @@ int UCTNode::get_visits() const {
 }
 
 float UCTNode::get_raw_eval(int tomove, int virtual_loss) const {
-    auto visits = get_visits() + virtual_loss;
-    assert(visits > 0);
+//    auto visits = get_visits() + virtual_loss;
+//    assert(visits > 0);
     auto blackeval = get_blackevals();
     if (tomove == FastBoard::WHITE) {
         blackeval += static_cast<double>(virtual_loss);
     }
-    auto eval = static_cast<float>(blackeval / double(visits));
+    auto eval = static_cast<float>(blackeval / (m_policy_sum + virtual_loss));
     if (tomove == FastBoard::WHITE) {
         eval = 1.0f - eval;
     }
     return eval;
+}
+
+double UCTNode::get_raw_eval_sum(int tomove) const {
+    double result = get_blackevals();
+    if (tomove == FastBoard::WHITE) {
+        result = m_policy_sum - result;
+    }
+    return result;
 }
 
 float UCTNode::get_eval(int tomove) const {
@@ -282,7 +290,7 @@ UCTNode* UCTNode::uct_select_child(int color, bool is_root) {
             winrate = child.get_eval(color);
         }
         const auto psa = child.get_policy();
-        const auto denom = 1.0 + child.get_visits();
+        const auto denom = 1.0 + child.get_visits() - child.get_policy_sum();
         const auto puct = cfg_puct * psa * (numerator / denom);
         const auto value = winrate + puct;
         assert(value > std::numeric_limits<double>::lowest());
@@ -304,18 +312,31 @@ public:
     NodeComp(int color) : m_color(color) {};
     bool operator()(const UCTNodePointer& a,
                     const UCTNodePointer& b) {
-        // if visits are not same, sort on visits
-        if (a.get_visits() != b.get_visits()) {
-            return a.get_visits() < b.get_visits();
-        }
-
-        // neither has visits, sort on policy prior
         if (a.get_visits() == 0) {
-            return a.get_policy() < b.get_policy();
+            if (b.get_visits() == 0)
+                return a.get_policy() < b.get_policy();
+            return true;
+        } else if (b.get_visits() == 0) {
+            return false;
+        } else {
+
+            return a.get_raw_eval_sum(m_color) < b.get_raw_eval_sum(m_color);
         }
 
-        // both have same non-zero number of visits
-        return a.get_eval(m_color) < b.get_eval(m_color);
+//        if (a.get_raw_eval_sum(m_color) != b.get_raw_eval_sum(m_color)) {
+//        }
+////        // if visits are not same, sort on visits
+////        if (a.get_visits() != b.get_visits()) {
+////            return a.get_visits() < b.get_visits();
+////        }
+//
+//        // neither has visits, sort on policy prior
+//        if (a.get_visits() == 0) {
+//            return a.get_policy() < b.get_policy();
+//        }
+//
+//        // both have same non-zero number of visits
+//        return a.get_eval(m_color) < b.get_eval(m_color);
     }
 private:
     int m_color;
