@@ -217,8 +217,8 @@ SearchResult UCTSearch::play_simulation(GameState & currstate,
         if (currstate.get_passes() >= 2) {
             eval = currstate.final_score();
             result = SearchResult::from_score(
-                    eval,
-                    1.0f - node->get_policy());
+                    eval - node->get_policy() * parent_net_eval,
+                    node->get_policy());
         } else {
 //            float eval;
             const auto had_children = node->has_children();
@@ -229,7 +229,7 @@ SearchResult UCTSearch::play_simulation(GameState & currstate,
                 result = SearchResult::from_eval(
                         eval - node->get_policy() * parent_net_eval,
 //                        (1.0f + node->get_policy()) * eval - node->get_policy() * parent_net_eval,
-                        1.0f - node->get_policy());
+                        node->get_policy());
             }
         }
         node->update(eval, 1.0f);
@@ -250,7 +250,7 @@ SearchResult UCTSearch::play_simulation(GameState & currstate,
 
 
         if (result.valid()) {
-            node->update(result.eval(), result.probability());
+            node->update(result.eval(), 1.0f - result.probability());
         }
     }
 
