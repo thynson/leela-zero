@@ -105,7 +105,7 @@ public:
     void ponder();
     bool is_running() const;
     void increment_playouts();
-    SearchResult play_simulation(GameState& currstate, UCTNode* const node, float parent_net_eval);
+    SearchResult play_simulation(GameState& currstate, UCTNode* const node);
 
 private:
     float get_min_psa_ratio() const;
@@ -140,14 +140,13 @@ private:
 
 class UCTWorker {
 public:
-    UCTWorker(GameState & state, UCTSearch * search, UCTNode * root, float parent_net_eval)
-      : m_rootstate(state), m_search(search), m_root(root), m_parent_net_eval(parent_net_eval){}
+    UCTWorker(GameState & state, UCTSearch * search, UCTNode * root)
+      : m_rootstate(state), m_search(search), m_root(root) {}
     void operator()();
 private:
     GameState & m_rootstate;
     UCTSearch * m_search;
     UCTNode * m_root;
-    float m_parent_net_eval;
 };
 
 #endif

@@ -268,7 +268,7 @@ UCTNode* UCTNode::uct_select_child(int color, bool is_root) {
         }
     }
 
-    const auto numerator = std::sqrt(double(parentvisits));
+    const auto numerator = 1.0 + log(1.0 + get_policy_sum());
     const auto fpu_reduction = (is_root ? cfg_fpu_root_reduction : cfg_fpu_reduction) * std::sqrt(total_visited_policy);
     // Estimated eval for unknown nodes = original parent NN eval - reduction
     const auto fpu_eval = get_net_eval(color) - fpu_reduction;
@@ -290,7 +290,7 @@ UCTNode* UCTNode::uct_select_child(int color, bool is_root) {
             winrate = child.get_eval(color);
         }
         const auto psa = child.get_policy();
-        const auto denom = 1.0 + child.get_policy_sum();
+        const auto denom = (1.0 + child.get_policy_sum());
         const auto puct = cfg_puct * psa * (numerator / denom);
         const auto value = winrate + puct;
         assert(value > std::numeric_limits<double>::lowest());

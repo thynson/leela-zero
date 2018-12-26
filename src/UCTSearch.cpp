@@ -205,39 +205,37 @@ float UCTSearch::get_min_psa_ratio() const {
 }
 
 SearchResult UCTSearch::play_simulation(GameState & currstate,
-                                        UCTNode* const node,
-                                        float parent_net_eval) {
+                                        UCTNode* const node) {
     const auto color = currstate.get_to_move();
-    auto result = SearchResult{};
 
+    SearchResult result;
     node->virtual_loss();
 
     if (node->expandable()) {
-        float eval;
         if (currstate.get_passes() >= 2) {
-            eval = currstate.final_score();
-            result = SearchResult::from_score(
-                    eval - node->get_policy() * parent_net_eval,
+            float score = currstate.final_score();
+            node->update(score, 1.0f);
+            return SearchResult::from_score(
+                    score,
                     node->get_policy());
         } else {
-//            float eval;
+            float eval;
             const auto had_children = node->has_children();
             const auto success =
                 node->create_children(m_network, m_nodes, currstate, eval,
                                       get_min_psa_ratio());
             if (!had_children && success) {
-                result = SearchResult::from_eval(
-                        eval - node->get_policy() * parent_net_eval,
-//                        (1.0f + node->get_policy()) * eval - node->get_policy() * parent_net_eval,
+                node->update(eval, 1.0f);
+                node->virtual_loss_undo();
+                return SearchResult::from_eval(
+                        eval,
                         node->get_policy());
             }
         }
-        node->update(eval, 1.0f);
-        node->virtual_loss_undo();
-        return result;
     }
 
-    if (node->has_children() && !result.valid()) {
+
+    if (node->has_children()) {
         auto next = node->uct_select_child(color, node == m_root.get());
         auto move = next->get_move();
 
@@ -245,13 +243,19 @@ SearchResult UCTSearch::play_simulation(GameState & currstate,
         if (move != FastBoard::PASS && currstate.superko()) {
             next->invalidate();
         } else {
-            result = play_simulation(currstate, next, node->get_net_eval(FastBoard::BLACK));
+            auto next_had_children = next->has_children();
+            result = play_simulation(currstate, next);
+            if (result.valid()) {
+                if (!next_had_children) {
+                    result = SearchResult::from_eval(result.eval() - result.probability() * node->get_net_eval(FastBoard::BLACK),
+                            result.probability());
+
+                }
+                node->update(result.eval(), 1.0f - result.probability());
+            }
         }
 
 
-        if (result.valid()) {
-            node->update(result.eval(), 1.0f - result.probability());
-        }
     }
 
     node->virtual_loss_undo();
@@ -260,8 +264,7 @@ SearchResult UCTSearch::play_simulation(GameState & currstate,
 }
 
 void UCTSearch::dump_stats(FastState &state, UCTNode &parent) {
-    if (cfg_quiet || !parent.has_children())
-    {
+    if (cfg_quiet || !parent.has_children()) {
         return;
     }
 
@@ -693,7 +696,7 @@ bool UCTSearch::stop_thinking(int elapsed_centis, int time_for_move) const
 void UCTWorker::operator()() {
     do {
         auto currstate = std::make_unique<GameState>(m_rootstate);
-        auto result = m_search->play_simulation(*currstate, m_root, m_parent_net_eval);
+        auto result = m_search->play_simulation(*currstate, m_root);
         if (result.valid()) {
             m_search->increment_playouts();
         }
@@ -707,7 +710,6 @@ void UCTSearch::increment_playouts() {
 int UCTSearch::think(int color, passflag_t passflag) {
     // Start counting time for us
     m_rootstate.start_clock(color);
-    float parent_net_eval = m_root->get_net_eval(FastBoard::BLACK);
 
     // set up timing info
     Time start;
@@ -730,9 +732,8 @@ int UCTSearch::think(int color, passflag_t passflag) {
     m_run = true;
     int cpus = cfg_num_threads;
     ThreadGroup tg(thread_pool);
-    for (int i = 1; i < cpus; i++)
-    {
-        tg.add_task(UCTWorker(m_rootstate, this, m_root.get(), parent_net_eval));
+    for (int i = 1; i < cpus; i++) {
+        tg.add_task(UCTWorker(m_rootstate, this, m_root.get()));
     }
 
     auto keeprunning = true;
@@ -741,7 +742,7 @@ int UCTSearch::think(int color, passflag_t passflag) {
     do {
         auto currstate = std::make_unique<GameState>(m_rootstate);
 
-        auto result = play_simulation(*currstate, m_root.get(), parent_net_eval);
+        auto result = play_simulation(*currstate, m_root.get());
         if (result.valid()) {
             increment_playouts();
         }
@@ -803,7 +804,6 @@ int UCTSearch::think(int color, passflag_t passflag) {
 }
 
 void UCTSearch::ponder() {
-    float parent_net_eval = m_root->get_net_eval(FastBoard::BLACK);
     update_root();
 
     m_root->prepare_root_node(m_network, m_rootstate.board.get_to_move(),
@@ -812,14 +812,14 @@ void UCTSearch::ponder() {
     m_run = true;
     ThreadGroup tg(thread_pool);
     for (int i = 1; i < cfg_num_threads; i++) {
-        tg.add_task(UCTWorker(m_rootstate, this, m_root.get(), parent_net_eval));
+        tg.add_task(UCTWorker(m_rootstate, this, m_root.get()));
     }
     Time start;
     auto keeprunning = true;
     auto last_output = 0;
     do {
         auto currstate = std::make_unique<GameState>(m_rootstate);
-        auto result = play_simulation(*currstate, m_root.get(), parent_net_eval);
+        auto result = play_simulation(*currstate, m_root.get());
         if (result.valid()) {
             increment_playouts();
         }
