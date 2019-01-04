@@ -97,7 +97,9 @@ public:
     size_t get_estimated_size();
     size_t get_estimated_cache_size();
     void nncache_resize(int max_count);
-    void nncache_dump_stats() { m_nncache.dump_stats(); }
+
+    void clear_stats() { m_forward->clear_stats(); m_nncache.clear_stats(); }
+    void dump_stats() { m_forward->dump_stats(); m_nncache.dump_stats(); }
     void nncache_clear();
 
     int get_max_size() { return m_forward->m_max_queue_size.load(); }

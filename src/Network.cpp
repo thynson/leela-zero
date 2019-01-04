@@ -928,49 +928,12 @@ void Network::process_output(
 
     result->result.policy_pass = outputs[NUM_INTERSECTIONS];
     result->result.winrate = winrate;
-    bool expected = false;
-    //std::unique_lock<std::mutex> lk(m_nncache.m_mutex);
-    while (!(result->ready.compare_exchange_strong(expected, true))) { expected = false; }
-    //auto obligations = std::move(result->backup_obligations);
-    //lk.unlock();
-    /*
-    if (!result->ready) {
-        myprintf("strange netresult ready status!\n");
-    }
-    else {*/
-    //auto count = 0;
-        //for (auto& bd : result->backup_obligations) {
-            //count++;
-
-    //std::unique_lock<std::mutex> lk(m_nncache.m_mutex);
-    if (!result->ready) {
-        throw("strange netresult ready status!\n");
-    }
+    //bool expected = false;
+    while (result->ready.test_and_set()); //{ expected = false; }
     auto obligations = std::move(result->backup_obligations);
-    //lk.unlock();
-    auto count = 0;
     for (auto& bd : obligations) {
-        count++;
-        if (bd.path.empty()) {
-            throw("path empty! %d\n", count);
-        }
         m_search->backup(bd, result);
     }
-    
-    /*auto& obligations = result->backup_obligations;
-    for (auto i = 0; i < obligations.size(); i++) {
-        if (!result->ready) {
-            throw("strange netresult ready status!\n");
-        }
-        m_search->backup(obligations[i], result);
-    }
-    obligations.clear();*/
-
-    //if (!count) {
-      //  myprintf(" ");
-    //}
-    //}
-    //result->backup_obligations.clear();
 #ifdef ACCUM_DEBUG
     --(m_search->pending_netresults);
     m_search->min_pending_netresults = std::min(m_search->min_pending_netresults.load(),

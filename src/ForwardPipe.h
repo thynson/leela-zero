@@ -62,6 +62,8 @@ public:
                               unsigned int channels,
                               unsigned int outputs,
                               std::shared_ptr<const ForwardPipeWeights> weights) = 0;
+    virtual void clear_stats() = 0;
+    virtual void dump_stats() = 0;
     UCTSearch* m_search;
     Network* m_network;
     std::mutex m_mutex;

@@ -465,7 +465,7 @@ static void initialize_network() {
 
 // Setup global objects after command line has been parsed
 void init_global_objects() {
-    thread_pool.initialize(cfg_num_threads);
+    thread_pool.initialize(cfg_num_threads+1); // cfg_num_threads); // one thread just for tree destruction
 
     // Use deterministic random numbers for hashing
     auto rng = std::make_unique<Random>(5489);

@@ -167,17 +167,6 @@ OpenCLScheduler<net_t>::~OpenCLScheduler() {
     for (auto & x : m_worker_threads) {
         x.join();
     }
-
-    myprintf("batch stats: ");
-    for (auto count : batch_stats) {
-        myprintf("%d, ", count->load());
-    }
-    myprintf("\npickup stats: ");
-    for (auto count : pickup_stats) {
-        myprintf("%d, ", count->load());
-    }
-    myprintf("\nidle count: %d", m_networks[0]->idle_count.load());
-    //myprintf("\nmax queue size: %d", m_max_queue_size.load());
 }
 
 template<typename net_t>

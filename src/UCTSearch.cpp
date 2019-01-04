@@ -80,7 +80,7 @@ private:
 
 
 UCTSearch::UCTSearch(GameState& g, Network& network)
-    : m_gtpstate(g), m_network(network),m_search_threads(thread_pool) {
+    : m_gtpstate(g), m_network(network), m_delete_futures(thread_pool), m_search_threads(thread_pool) {
     set_playout_limit(cfg_max_playouts);
     set_visit_limit(cfg_max_visits);
 
@@ -88,6 +88,7 @@ UCTSearch::UCTSearch(GameState& g, Network& network)
     m_root = std::make_unique<UCTNode>(FastBoard::PASS, 0.0f);
     m_network.set_search(this);
 
+    // it's not necessary to put search threads inside a pool; they're always running
     for (int i = 1; i <= cfg_num_threads; i++) {
         m_search_threads.add_task(UCTWorker(this, i));
     }
@@ -96,9 +97,10 @@ UCTSearch::UCTSearch(GameState& g, Network& network)
 UCTSearch::~UCTSearch() {
     m_terminate = true;
     m_search_threads.wait_all();
+    m_delete_futures.wait_all();
 }
 
-bool UCTSearch::advance_to_new_rootstate(std::list<UCTNode*> to_delete) {
+bool UCTSearch::advance_to_new_rootstate(std::list<UCTNode*>& to_delete) {
 
     if (!m_root || !m_last_rootstate) {
         // No current state
@@ -127,13 +129,15 @@ bool UCTSearch::advance_to_new_rootstate(std::list<UCTNode*> to_delete) {
         return false;
     }
 
+    // why necessary?
     // Make sure that the nodes we destroyed the previous move are
     // in fact destroyed
-    while (!m_delete_futures.empty()) {
+    /*while (!m_delete_futures.empty()) {
         m_delete_futures.front().wait_all();
         m_delete_futures.pop_front();
-    }
+    }*/
 
+    myprintf("entered going forward in tree\n");
     // Try to replay moves advancing m_root
     for (auto i = 0; i < depth; i++) {
         test->forward_move();
@@ -149,6 +153,7 @@ bool UCTSearch::advance_to_new_rootstate(std::list<UCTNode*> to_delete) {
         to_delete.emplace_back(oldroot.release());
 
         if (!m_root) {
+            myprintf("tree hasn't expanded this far\n");
             // Tree hasn't been expanded this far
             return false;
         }
@@ -196,6 +201,8 @@ void UCTSearch::update_root() {
     //auto start_nodes = m_root->count_nodes_and_clear_expand_state();
 #endif
 
+    m_network.clear_stats();
+
     acquire_writer();
     m_rootstate = m_gtpstate;
 
@@ -206,14 +213,17 @@ void UCTSearch::update_root() {
         }
         m_root = std::make_unique<UCTNode>(FastBoard::PASS, 0.0f);
     }
+    myprintf("to delete: %d nodes\n", to_delete.size());
     if (m_pending_count && !to_delete.empty()) {
-        ThreadGroup tg(thread_pool);
-        tg.add_task([](std::list<UCTNode*> to_delete, std::atomic<int>* pending_monitor) {
+        //ThreadGroup tg(thread_pool);
+        m_delete_futures.add_task([](std::list<UCTNode*> to_delete, std::atomic<int>* pending_monitor) {
             auto root = to_delete.front();
             to_delete.pop_front();
             ThreadGroup tg0(thread_pool);
             while (*pending_monitor > 0
                 || root->m_virtual_loss) {
+                myprintf("pending count: %d\n", pending_monitor->load());
+                myprintf("root vl: %d\n", root->m_virtual_loss.load());
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
             myprintf("root virtual loss at deletion: %d\n", root->m_virtual_loss.load());
@@ -221,10 +231,11 @@ void UCTSearch::update_root() {
                 tg0.add_task([node]() { delete node; });
             }
             delete root;
-            tg0.wait_all();
+            //tg0.wait_all();
             delete pending_monitor;
+            myprintf("deleted!\n");
         }, to_delete, m_pending_count);
-        m_delete_futures.push_back(std::move(tg));
+        //m_delete_futures.push_back(std::move(tg));
     }
 
     // Clear last_rootstate to prevent accidental use.
@@ -876,7 +887,7 @@ bool UCTSearch::stop_thinking(int elapsed_centis, int time_for_move) const {
 
 void UCTWorker::operator()() {
     while (!m_search->m_terminate) {
-        if (m_search->is_running()){ //&& m_search->m_network.get_max_size() > 0) {
+        if (m_search->is_running() && m_search->m_network.get_max_size() > 0) {
             m_search->acquire_reader();
             if (m_search->m_must_run || !m_search->stop_thinking(0, 1)) {
                 auto rootstate = std::make_unique<GameState>(m_search->m_rootstate);
@@ -892,7 +903,7 @@ void UCTWorker::operator()() {
         std::unique_lock<std::mutex> lk(m_search->m_mutex);
         m_search->m_cv.wait(lk, [&]() { return m_search->m_terminate ||
             (m_search->is_running() 
-            //&& m_search->m_network.get_max_size() > 0
+            && m_search->m_network.get_max_size() > 0
             && (m_search->m_must_run || !m_search->stop_thinking(0,1))); });
     }
 }
@@ -980,7 +991,7 @@ int UCTSearch::think(int color, passflag_t passflag) {
                  (m_playouts * 100.0) / (elapsed_centis+1),
                  (m_positions * 100.0) / (elapsed_centis+1));
 
-        m_network.nncache_dump_stats();
+        m_network.dump_stats();
 #ifdef ACCUM_DEBUG
         myprintf("failed simulations: %u\n", failed_simulations.load());
         myprintf("max leaf vl multiplicity: %u\n", max_leaf_vl.load());
@@ -1040,7 +1051,7 @@ void UCTSearch::ponder() {
 
     myprintf("\n%7.2f visits, %u nodes, %u inflated\n\n", m_root->get_visits(), 
         UCTNodePointer::m_nodes.load(), UCTNodePointer::m_inflated_nodes.load());
-    m_network.nncache_dump_stats();
+    m_network.dump_stats();
 #ifdef ACCUM_DEBUG
     myprintf("failed simulations: %u\n", failed_simulations.load());
     myprintf("max leaf vl multiplicity: %u\n", max_leaf_vl.load());

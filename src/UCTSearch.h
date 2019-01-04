@@ -149,7 +149,8 @@ private:
     std::atomic<bool> m_must_run{false};
     std::atomic<bool> m_root_prepared{false};
 
-    std::list<Utils::ThreadGroup> m_delete_futures;
+    //std::list<Utils::ThreadGroup> m_delete_futures;
+    Utils::ThreadGroup m_delete_futures;
 
     void dump_stats(FastState& state, UCTNode& parent);
     void tree_stats(UCTNode& node);
@@ -163,7 +164,7 @@ private:
     bool stop_thinking(int elapsed_centis = 0, int time_for_move = 0) const;
     int get_best_move(passflag_t passflag);
     void update_root();
-    bool advance_to_new_rootstate(std::list<UCTNode*> to_delete);
+    bool advance_to_new_rootstate(std::list<UCTNode*>& to_delete);
     void output_analysis(FastState & state, UCTNode & parent);
 
     Network & m_network;

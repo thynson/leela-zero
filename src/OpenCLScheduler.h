@@ -100,6 +100,24 @@ private:
     std::vector<std::atomic<int>*> batch_stats;
     std::vector<std::atomic<int>*> pickup_stats;
 
+    void clear_stats() {
+        for (auto s : batch_stats) *s = 0;
+        for (auto s : pickup_stats) *s = 0;
+    }
+
+    void dump_stats() {
+        myprintf("batch stats: ");
+        for (auto count : batch_stats) {
+            myprintf("%d, ", count->load());
+        }
+        myprintf("\npickup stats: ");
+        for (auto count : pickup_stats) {
+            myprintf("%d, ", count->load());
+        }
+        myprintf("\nidle count: %d\n", m_networks[0]->idle_count.load());
+        //myprintf("\nmax queue size: %d", m_max_queue_size.load());
+    }
+
     void batch_worker(const size_t gnum, const size_t i);
     void push_input_convolution(unsigned int filter_size,
                                 unsigned int channels,

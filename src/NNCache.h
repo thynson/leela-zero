@@ -68,6 +68,7 @@ public:
         return {m_hits, m_lookups};
     }
 
+    void clear_stats();
     void dump_stats();
 
     // Return the estimated memory consumption of the cache.
@@ -76,8 +77,8 @@ public:
     struct Entry {
         //Entry(const Netresult& r)
         //    : result(r) {}
-        std::atomic<bool> ready{false};
-        int num_mods{0};
+        std::atomic_flag ready{false};
+        //int num_mods{0};
         //std::mutex m_mutex;
         Netresult result;  // ~ 1.4KiB
         std::vector<BackupData> backup_obligations;
