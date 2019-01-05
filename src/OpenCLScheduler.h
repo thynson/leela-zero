@@ -61,6 +61,11 @@ class OpenCLScheduler : public ForwardPipe {
                            Netresult_ptr result) : in(std::move(input)), tomove(tomove), symmetry(symmetry), result(result)
         {}
     };
+    struct BackupEntry {
+        int tomove;
+        int symmetry;
+        Netresult_ptr result;
+    };
 public:
     virtual ~OpenCLScheduler();
     OpenCLScheduler();
@@ -98,23 +103,48 @@ private:
 
     std::list<std::thread> m_worker_threads;
     std::vector<std::atomic<int>*> batch_stats;
-    std::vector<std::atomic<int>*> pickup_stats;
+    //std::vector<std::atomic<int>*> pickup_stats;
+
+    std::vector<std::vector<net_t*>> inputs;
+    std::vector<std::vector<BackupEntry*>> backup_entries; // one-one correspond to inputs
+    std::vector<std::atomic<int>*> writing_location;
+    std::vector<std::atomic<int>*> written_location;
+    std::vector<std::condition_variable*> cv;
+
+    std::vector<std::pair<int, int>> empty_workers; // cyclic buffer, <gpu num, worker thread num>
+    std::vector<std::pair<int, int>> unfull_workers; // cyclic buffer
+    std::atomic<int> empty_workers_head{0};
+    std::atomic<int> empty_workers_writing{0};
+    std::atomic<int> empty_workers_written{0};
+    std::atomic<int> unfull_workers_head{0};
+    std::atomic<int> unfull_workers_writing{0};
+    std::atomic<int> unfull_workers_written{0};
 
     void clear_stats() {
-        for (auto s : batch_stats) *s = 0;
-        for (auto s : pickup_stats) *s = 0;
+        auto idx = 0;
+        for (auto gpu : batch_stats) {
+            for (auto j = 0; j < cfg_batch_size[idx]; j++)
+                gpu[j] = 0;
+            idx++;
+        }
+        //for (auto s : pickup_stats) *s = 0;
     }
 
     void dump_stats() {
-        myprintf("batch stats: ");
-        for (auto count : batch_stats) {
-            myprintf("%d, ", count->load());
+        myprintf("batch stats:\n");
+        auto idx = 0;
+        for (auto gpu : batch_stats) {
+            myprintf("GPU %d: \t", idx);
+            for (auto j = 0; j < cfg_batch_size[idx]; j++)
+                myprintf("%d, ", gpu[j].load());
+            idx++;
         }
-        myprintf("\npickup stats: ");
+        /*myprintf("\npickup stats: ");
         for (auto count : pickup_stats) {
             myprintf("%d, ", count->load());
-        }
-        myprintf("\nidle count: %d\n", m_networks[0]->idle_count.load());
+        }*/
+        for (auto& gpu : m_networks)
+            myprintf("idle count: %d\n", gpu->idle_count.load());
         //myprintf("\nmax queue size: %d", m_max_queue_size.load());
     }
 

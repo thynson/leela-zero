@@ -77,7 +77,7 @@ public:
     struct Entry {
         //Entry(const Netresult& r)
         //    : result(r) {}
-        std::atomic_flag ready{false};
+        std::atomic_flag ready{ ATOMIC_FLAG_INIT };
         //int num_mods{0};
         //std::mutex m_mutex;
         Netresult result;  // ~ 1.4KiB

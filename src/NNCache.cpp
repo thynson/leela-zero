@@ -67,25 +67,6 @@ std::shared_ptr<NNCache::Entry> NNCache::lookup_and_insert(std::uint64_t hash,
             m_order.pop_front();
         }
         auto result = std::make_shared<Entry>();
-
-        /*bool expected = false;
-        if (result->ready.compare_exchange_strong(expected, true)) {
-            result->num_mods++;
-            result->backup_obligations.emplace_back(std::move(bd));
-            result->ready.store(false);
-            //expected = true;
-            //if (!result->ready.compare_exchange_strong(expected, false)) { Utils::myprintf("Strange ready status!\n"); }
-        }
-        else {
-            ready = true;
-        }*/
-        
-        /*if (result->ready.test_and_set())
-            throw("Strange ready state upon creation!");
-        else {
-            result->backup_obligations.emplace_back(std::move(bd));
-            result->ready.clear();
-        }*/
         result->backup_obligations.emplace_back(std::move(bd));
         
         m_cache.emplace(hash, result);
@@ -107,6 +88,7 @@ void NNCache::resize(int size) {
 }
 
 void NNCache::clear() {
+    std::lock_guard<std::mutex> lk(m_mutex);
     m_cache.clear();
     m_order.clear();
 }

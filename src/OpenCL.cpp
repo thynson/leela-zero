@@ -133,7 +133,7 @@ void OpenCL_Network<net_t>::add_weights(size_t layer,
 }
 
 template <typename net_t>
-void OpenCL_Network<net_t>::forward(const std::vector<net_t>& input,
+void OpenCL_Network<net_t>::forward(const net_t* input,
                              std::vector<float>& output_pol,
                              std::vector<float>& output_val,
                              OpenCLContext & opencl_context,
@@ -200,8 +200,8 @@ void OpenCL_Network<net_t>::forward(const std::vector<net_t>& input,
 
     std::unique_lock<std::mutex> enqueue_lock(m_enqueue_mutex);
 
-    const auto inSize = sizeof(net_t) * input.size();
-    queue.enqueueWriteBuffer(inBuffer, CL_FALSE, 0, inSize, input.data());
+    constexpr auto in_size = Network::INPUT_CHANNELS * BOARD_SIZE * BOARD_SIZE;
+    queue.enqueueWriteBuffer(inBuffer, CL_FALSE, 0, sizeof(net_t) * in_size * batch_size, input);
 
     // Fused in_out transformation kernel is slower with big batch_sizes than
     // calling out and in transformations separately.

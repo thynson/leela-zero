@@ -368,11 +368,6 @@ void batchnorm(const size_t channels,
     }
 }
 
-void CPUPipe::forward0(std::unique_ptr<const std::vector<float>> input,
-                       const int tomove,
-                       const int symmetry,
-                       Netresult_ptr result) {}
-
 void CPUPipe::forward(const std::vector<float>& input,
                       std::vector<float>& output_pol,
                       std::vector<float>& output_val) {

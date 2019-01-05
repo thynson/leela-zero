@@ -271,13 +271,13 @@ void UCTSearch::update_root() {
     release_writer();
 
     m_run = true;
-    m_must_run = true;
+    //m_must_run = true;
     std::unique_lock<std::mutex> lk(m_mutex);
     m_cv.notify_all();
     lk.unlock();
 
     while (!m_root_prepared) {
-        if (m_network.get_max_size() > 0) {
+        //if (m_network.get_max_size() > 0) {
             acquire_reader();
             auto rootstate = std::make_unique<GameState>(m_rootstate);
             auto root = m_root.get();
@@ -285,9 +285,8 @@ void UCTSearch::update_root() {
             ++(*pending_count);
             release_reader();
             play_simulation(std::move(rootstate), root, pending_count, 0);
-        }
+        //}
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
-        //issue a play_simulation_routine don't use m_must_run ..
     }
 }
 
@@ -887,9 +886,10 @@ bool UCTSearch::stop_thinking(int elapsed_centis, int time_for_move) const {
 
 void UCTWorker::operator()() {
     while (!m_search->m_terminate) {
-        if (m_search->is_running() && m_search->m_network.get_max_size() > 0) {
+        if (m_search->is_running()) { // && m_search->m_network.get_max_size() > 0) {
             m_search->acquire_reader();
-            if (m_search->m_must_run || !m_search->stop_thinking(0, 1)) {
+            if (//m_search->m_must_run || 
+                !m_search->stop_thinking(0, 1)) {
                 auto rootstate = std::make_unique<GameState>(m_search->m_rootstate);
                 auto root = m_search->m_root.get();
                 auto pending_count = m_search->m_pending_count;
@@ -903,8 +903,9 @@ void UCTWorker::operator()() {
         std::unique_lock<std::mutex> lk(m_search->m_mutex);
         m_search->m_cv.wait(lk, [&]() { return m_search->m_terminate ||
             (m_search->is_running() 
-            && m_search->m_network.get_max_size() > 0
-            && (m_search->m_must_run || !m_search->stop_thinking(0,1))); });
+            // && m_search->m_network.get_max_size() > 0
+            && (//m_search->m_must_run || 
+                !m_search->stop_thinking(0,1))); });
     }
 }
 
@@ -960,7 +961,7 @@ int UCTSearch::think(int color, passflag_t passflag) {
 
     // stop the search
     // m_run = false; // set in GTP.cpp, depending on --noponder or not
-    m_must_run = false;
+    //m_must_run = false;
 
     m_root->acquire_reader();
     // reactivate all pruned root children
@@ -1019,7 +1020,7 @@ void UCTSearch::ponder() {
     auto keeprunning = true;
     auto last_output = 0;
     do {
-        if (is_running() && m_network.get_max_size() > 0) {
+        if (is_running()) { // && m_network.get_max_size() > 0) {
             acquire_reader();
             auto rootstate = std::make_unique<GameState>(m_rootstate);
             auto root = m_root.get();
@@ -1043,7 +1044,7 @@ void UCTSearch::ponder() {
 
     // stop the search
     m_run = keeprunning;
-    m_must_run = false;
+    //m_must_run = false;
 
     // display search info
     myprintf("\n");

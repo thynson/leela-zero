@@ -146,7 +146,7 @@ private:
 
     Utils::ThreadGroup m_search_threads;
     std::atomic<bool> m_terminate{false};
-    std::atomic<bool> m_must_run{false};
+    //std::atomic<bool> m_must_run{false};
     std::atomic<bool> m_root_prepared{false};
 
     //std::list<Utils::ThreadGroup> m_delete_futures;

@@ -103,45 +103,72 @@ void OpenCLScheduler<net_t>::initialize(const int channels) {
     // Launch the worker threads.  Minimum 1 worker per GPU, but use enough threads
     // so that we can at least concurrently schedule something to the GPU.
 
+    auto num_gpus = m_opencl.size();
+
     // number of worker threads
     if (cfg_workers.empty()) {
-        cfg_workers.assign(m_opencl.size(), 2); 
+        cfg_workers.assign(num_gpus, 2); 
     }
     else {
-        while (cfg_workers.size() < m_opencl.size()) {
+        while (cfg_workers.size() < num_gpus) {
             cfg_workers.push_back(cfg_workers.back());
         }
     }
-    // auto num_worker_threads = 2; // cfg_num_threads / cfg_batch_size / (m_opencl.size() + 1) + 1;
 
     // batch sizes
     if (cfg_batch_size.empty()) {
-        cfg_batch_size.assign(m_opencl.size(), 1);
+        cfg_batch_size.assign(num_gpus, 1);
     }
     else {
-        while (cfg_batch_size.size() < m_opencl.size()) {
+        while (cfg_batch_size.size() < num_gpus) {
             cfg_batch_size.push_back(cfg_batch_size.back());
         }
     }
 
-    // !! need rework..
-    for (auto i = 0; i < cfg_batch_size[0]; i++) {
-        batch_stats.emplace_back(new std::atomic<int>(0));
-        pickup_stats.emplace_back(new std::atomic<int>(0));
-    }
-
-    //printf("%d, %d\n", cfg_batch_size.size(), cfg_batch_size[0]);
-    //printf("%d, %d\n", cfg_workers.size(), cfg_workers[0]);
+    auto queue_size = 1;
     auto gnum = 0;
+    for (auto & opencl : m_opencl)
+        queue_size += cfg_workers[gnum++];
+    empty_workers.resize(queue_size);
+    unfull_workers.resize(queue_size);
 
-    // m_max_queue_size = cfg_batch_size * m_opencl.size() * num_worker_threads;// +cfg_batch_size - cfg_num_threads + 0;
-    // num_worker_threads + 1 ... more worker threads don't help? GPU deal with two forward passes in parallel?
+    auto num_workers = cfg_workers;
+    auto count = 1;
+    while (count < queue_size) {
+        auto gnum = 0;
+        for (auto& opencl : m_opencl) {
+            auto& num = num_workers[gnum];
+            if (num)
+                empty_workers.push_back({ gnum,--num }), count++;
+            gnum++;
+        }
+    }
+    empty_workers_writing = empty_workers_written = queue_size - 1;
 
+    constexpr auto in_size = Network::INPUT_CHANNELS * BOARD_SIZE * BOARD_SIZE;
+    inputs.resize(num_gpus);
+    backup_entries.resize(num_gpus);
+    writing_location.resize(num_gpus);
+    written_location.resize(num_gpus);
+    batch_stats.resize(num_gpus);
+
+    gnum = 0;
     for (auto & opencl : m_opencl) {
-        opencl->initialize(channels, cfg_batch_size[gnum]);
-        m_max_queue_size += cfg_batch_size[gnum] * cfg_workers[gnum];
+        auto batchsize = cfg_batch_size[gnum];
+        auto num_workers = cfg_workers[gnum];
+        opencl->initialize(channels, batchsize);
 
-        for (auto i = unsigned{0}; i < cfg_workers[gnum]; i++) {
+        inputs[gnum].resize(num_workers);
+        backup_entries[gnum].resize(num_workers);
+        writing_location[gnum] = new std::atomic<int>[num_workers]();
+        written_location[gnum] = new std::atomic<int>[num_workers]();
+        cv[gnum] = new std::condition_variable[num_workers];
+
+        batch_stats[gnum] = new std::atomic<int>[batchsize]();
+
+        for (auto i = unsigned{0}; i < num_workers; i++) {
+            inputs[gnum][i] = new net_t[in_size * batchsize];
+            backup_entries[gnum][i] = new BackupEntry[batchsize];
             auto t = std::thread(&OpenCLScheduler<net_t>::batch_worker, this, gnum, i);
             m_worker_threads.push_back(std::move(t));
         }
@@ -328,6 +355,7 @@ void OpenCLScheduler<net_t>::forward0(std::unique_ptr<const std::vector<float>> 
 
 template <typename net_t>
 void OpenCLScheduler<net_t>::batch_worker(const size_t gnum, const size_t i) {
+
     constexpr auto in_size = Network::INPUT_CHANNELS * BOARD_SIZE * BOARD_SIZE;
     constexpr auto out_pol_size = Network::OUTPUTS_POLICY * BOARD_SIZE * BOARD_SIZE;
     constexpr auto out_val_size = Network::OUTPUTS_VALUE * BOARD_SIZE * BOARD_SIZE;
@@ -366,7 +394,7 @@ void OpenCLScheduler<net_t>::batch_worker(const size_t gnum, const size_t i) {
             std::move(begin(m_forward_queue0), end, std::back_inserter(inputs));
             m_forward_queue0.erase(begin(m_forward_queue0), end);
             lk.unlock();
-            if (count) { (*pickup_stats[count - 1])++; }
+            //if (count) { (*pickup_stats[count - 1])++; }
 
             m_max_queue_size -= count;
             remaining -= count;
@@ -408,7 +436,7 @@ void OpenCLScheduler<net_t>::batch_worker(const size_t gnum, const size_t i) {
 
         {
             m_networks[gnum]->forward(
-                batch_input, batch_output_pol, batch_output_val, context, m_cv, count);
+                batch_input.data(), batch_output_pol, batch_output_val, context, m_cv, count);
         }
         //std::unique_lock<std::mutex> lk(m_mutex);
         //m_cv.notify_all();

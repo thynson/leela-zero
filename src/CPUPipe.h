@@ -34,7 +34,9 @@ public:
     virtual void forward0(std::unique_ptr<const std::vector<float>> input,
                           const int tomove,
                           const int symmetry,
-                          Netresult_ptr result);
+                          Netresult_ptr result) {}
+    virtual void clear_stats() {}
+    virtual void dump_stats() {}
     virtual void push_weights(unsigned int filter_size,
                               unsigned int channels,
                               unsigned int outputs,

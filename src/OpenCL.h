@@ -76,6 +76,7 @@ class OpenCL_Network {
 public:
     std::atomic<int> m_occupied{0};
     std::atomic<int> idle_count{0};
+    
     OpenCL_Network(OpenCL<net_t> & opencl) : m_opencl(opencl) {}
     OpenCL<net_t> & getOpenCL() {
         return m_opencl;
@@ -137,7 +138,7 @@ public:
         return m_layers.size();
     }
 
-    void forward(const std::vector<net_t>& input,
+    void forward(const net_t* input,
             std::vector<float>& output_pol,
             std::vector<float>& output_val,
             OpenCLContext & opencl_context,
