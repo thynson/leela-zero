@@ -33,10 +33,12 @@
 #include <condition_variable>
 #include <cassert>
 
+#include "NNCache.h"
 #include "Tuner.h"
 
 template <typename net_t> class OpenCL;
 template <typename net_t> class OpenCL_Network;
+template <typename net_t> class OpenCLScheduler;
 
 class Layer {
     template <typename> friend class OpenCL_Network;
@@ -74,8 +76,6 @@ private:
 template <typename net_t>
 class OpenCL_Network {
 public:
-    std::atomic<int> m_occupied{0};
-    std::atomic<int> idle_count{0};
     
     OpenCL_Network(OpenCL<net_t> & opencl) : m_opencl(opencl) {}
     OpenCL<net_t> & getOpenCL() {
@@ -188,16 +188,17 @@ template <typename net_t>
 class OpenCL {
     friend class OpenCL_Network<net_t>;
     friend class Tuner<net_t>;
+    friend class OpenCLScheduler<net_t>;
 public:
     OpenCL(int gpu, bool silent = false);
 
-    void initialize(const int channels, int batch_size = 1);
+    void initialize(const int channels, int num_workers, int batch_size = 1);
     void ensure_context_initialized(OpenCLContext & opencl_context);
     std::string get_device_name();
     bool has_fp16_compute();
 
     std::vector<size_t> get_sgemm_tuners();
-
+    
     cl::Device m_device;
     cl::Context m_context;
 private:
@@ -205,6 +206,27 @@ private:
     void process_tuners(std::string tuners);
 
     int m_batch_size = 1;
+    int m_num_workers;
+
+    
+    struct BackupEntry {
+        int tomove;
+        int symmetry;
+        Netresult_ptr result;
+    };
+
+    std::atomic<int> m_occupied{0};
+    std::atomic<int> idle_count{0};
+
+    std::atomic<int>* batch_stats;
+    std::vector<net_t*> inputs;
+    std::vector<BackupEntry*> backup_entries; // one-one correspond to inputs
+    std::atomic<int>* writing_location;
+    std::atomic<int>* written_location;
+    std::mutex* mutex;
+    std::condition_variable* cv;
+
+
     cl::Program m_program;
     std::string m_cl_args;
 

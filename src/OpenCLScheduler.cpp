@@ -106,24 +106,16 @@ void OpenCLScheduler<net_t>::initialize(const int channels) {
     auto num_gpus = m_opencl.size();
 
     // number of worker threads
-    if (cfg_workers.empty()) {
+    if (cfg_workers.empty())
         cfg_workers.assign(num_gpus, 2); 
-    }
-    else {
-        while (cfg_workers.size() < num_gpus) {
-            cfg_workers.push_back(cfg_workers.back());
-        }
-    }
+    else while (cfg_workers.size() < num_gpus)
+        cfg_workers.push_back(cfg_workers.back());
 
     // batch sizes
-    if (cfg_batch_size.empty()) {
+    if (cfg_batch_size.empty())
         cfg_batch_size.assign(num_gpus, 1);
-    }
-    else {
-        while (cfg_batch_size.size() < num_gpus) {
-            cfg_batch_size.push_back(cfg_batch_size.back());
-        }
-    }
+    else while (cfg_batch_size.size() < num_gpus)
+        cfg_batch_size.push_back(cfg_batch_size.back());
 
     auto queue_size = 1;
     auto gnum = 0;
@@ -134,6 +126,7 @@ void OpenCLScheduler<net_t>::initialize(const int channels) {
 
     auto num_workers = cfg_workers;
     auto count = 1;
+    // set up initial empty workers queue to be evenly distributed among all GPUs
     while (count < queue_size) {
         auto gnum = 0;
         for (auto& opencl : m_opencl) {
@@ -146,36 +139,19 @@ void OpenCLScheduler<net_t>::initialize(const int channels) {
     empty_workers_writing = empty_workers_written = queue_size - 1;
 
     constexpr auto in_size = Network::INPUT_CHANNELS * BOARD_SIZE * BOARD_SIZE;
-    inputs.resize(num_gpus);
-    backup_entries.resize(num_gpus);
-    writing_location.resize(num_gpus);
-    written_location.resize(num_gpus);
-    batch_stats.resize(num_gpus);
 
     gnum = 0;
     for (auto & opencl : m_opencl) {
         auto batchsize = cfg_batch_size[gnum];
         auto num_workers = cfg_workers[gnum];
-        opencl->initialize(channels, batchsize);
-
-        inputs[gnum].resize(num_workers);
-        backup_entries[gnum].resize(num_workers);
-        writing_location[gnum] = new std::atomic<int>[num_workers]();
-        written_location[gnum] = new std::atomic<int>[num_workers]();
-        cv[gnum] = new std::condition_variable[num_workers];
-
-        batch_stats[gnum] = new std::atomic<int>[batchsize]();
+        opencl->initialize(channels, num_workers, batchsize);
 
         for (auto i = unsigned{0}; i < num_workers; i++) {
-            inputs[gnum][i] = new net_t[in_size * batchsize];
-            backup_entries[gnum][i] = new BackupEntry[batchsize];
             auto t = std::thread(&OpenCLScheduler<net_t>::batch_worker, this, gnum, i);
             m_worker_threads.push_back(std::move(t));
         }
         gnum++;
     }
-
-    printf("max queue size: %d\n", m_max_queue_size.load());
 
     // Exit immediately after tuning.  We should exit here because we skipped
     // initializing rest of the kernels due to some NVIDIA drivers crashing.
@@ -337,7 +313,7 @@ void OpenCLScheduler<net_t>::forward0(std::unique_ptr<const std::vector<float>> 
                                       const int tomove,
                                       const int symmetry,
                                       Netresult_ptr result) {
-    // auto max_size = cfg_batch_size * m_opencl.size() * 2;
+
     m_search->m_positions++;
     std::unique_lock<std::mutex> lk(m_mutex);
     m_forward_queue0.push_back(std::make_unique<ForwardQueueEntry0>(
@@ -362,9 +338,11 @@ void OpenCLScheduler<net_t>::batch_worker(const size_t gnum, const size_t i) {
 
     OpenCLContext context;
 
-    auto batch_input = std::vector<net_t>(in_size * cfg_batch_size[gnum]);
-    auto batch_output_pol = std::vector<float>(out_pol_size * cfg_batch_size[gnum]);
-    auto batch_output_val = std::vector<float>(out_val_size * cfg_batch_size[gnum]);
+    auto batch_size = m_opencl[gnum]->m_batch_size;
+
+    auto batch_input = std::vector<net_t>(in_size * batch_size);
+    auto batch_output_pol = std::vector<float>(out_pol_size * batch_size);
+    auto batch_output_val = std::vector<float>(out_val_size * batch_size);
 
     auto pickup_task = [this, gnum, in_size, i](std::vector<net_t>&batch_in) {
         std::vector<std::unique_ptr<ForwardQueueEntry0>> inputs;
@@ -375,7 +353,7 @@ void OpenCLScheduler<net_t>::batch_worker(const size_t gnum, const size_t i) {
 
         std::unique_lock<std::mutex> lk(m_mutex, std::defer_lock);
         while (remaining) {
-            bool idle = !(m_networks[gnum]->m_occupied.load()) && inputs.size() > 0;
+            bool idle = !(m_opencl[gnum]->m_occupied.load()) && inputs.size() > 0;
             if (idle || !m_running) break;
             lk.lock();
             int queue_size = m_forward_queue0.size();
@@ -383,7 +361,7 @@ void OpenCLScheduler<net_t>::batch_worker(const size_t gnum, const size_t i) {
                 m_cv.wait(lk,
                     [this, gnum, &queue_size, &idle, &inputs] {
                     queue_size = m_forward_queue0.size();
-                    idle = !(m_networks[gnum]->m_occupied.load()) && inputs.size() > 0;
+                    idle = !(m_opencl[gnum]->m_occupied.load()) && inputs.size() > 0;
                     return !m_running || queue_size > 0 || idle; });
             }
             if (idle || !m_running) break;
@@ -396,7 +374,7 @@ void OpenCLScheduler<net_t>::batch_worker(const size_t gnum, const size_t i) {
             lk.unlock();
             //if (count) { (*pickup_stats[count - 1])++; }
 
-            m_max_queue_size -= count;
+            //m_max_queue_size -= count;
             remaining -= count;
 
             while (index < inputs.size()) {
@@ -405,9 +383,9 @@ void OpenCLScheduler<net_t>::batch_worker(const size_t gnum, const size_t i) {
                 ++index;
             }
         }
-        ++(m_networks[gnum]->m_occupied);
+        ++(m_opencl[gnum]->m_occupied);
         //myprintf("max queue size: %d - worker %d picking up\n", m_max_queue_size.load(), i);
-        m_max_queue_size -= remaining;
+        //m_max_queue_size -= remaining;
         //m_search->m_pending_netresults += remaining;
         //myprintf("max queue size: %d - worker %d pickup finished\n", m_max_queue_size.load(), i);
         return inputs;
@@ -419,7 +397,7 @@ void OpenCLScheduler<net_t>::batch_worker(const size_t gnum, const size_t i) {
         auto inputs = pickup_task(batch_input);
         //m_cv0.notify_all();
         auto count = inputs.size();
-        if (count) { (*batch_stats[count - 1])++; }
+        //if (count) { (*batch_stats[count - 1])++; }
 
         /*
         for (auto count : batch_stats) {
@@ -500,7 +478,7 @@ void OpenCLScheduler<net_t>::batch_worker(const size_t gnum, const size_t i) {
         }
         */
         //myprintf("%d ", m_max_queue_size.load());
-        m_max_queue_size += cfg_batch_size[gnum];
+        //m_max_queue_size += cfg_batch_size[gnum];
         //myprintf("max queue size: %d - worker %d\n", m_max_queue_size.load(), i);
         //lk.lock();
         m_cv0.notify_all();

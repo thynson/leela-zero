@@ -308,7 +308,7 @@ void OpenCL_Network<net_t>::forward(const net_t* input,
     //finish_lock.unlock();
      enqueue_lock.unlock();
     
-    if (--m_occupied == 0) idle_count++; 
+    if (--m_opencl.m_occupied == 0) m_opencl.idle_count++; 
     //probably should first acquire lock to the gpu queue's mutex..
     cv.notify_all();
 
@@ -840,8 +840,9 @@ OpenCL<net_t>::OpenCL(int gpu, bool silent) {
 }
 
 template <typename net_t>
-void OpenCL<net_t>::initialize(const int channels, int batch_size) {
+void OpenCL<net_t>::initialize(const int channels, int num_workers, int batch_size) {
     m_batch_size = batch_size;
+    m_num_workers = num_workers;
     // Make program of the source code in the context
     try {
         m_program = cl::Program(m_context,
@@ -909,6 +910,20 @@ void OpenCL<net_t>::initialize(const int channels, int batch_size) {
     myprintf("\n");
 
     m_init_ok = true;
+    
+    constexpr auto in_size = Network::INPUT_CHANNELS * BOARD_SIZE * BOARD_SIZE;
+
+    batch_stats = new std::atomic<int>[batch_size]();
+    inputs.reserve(num_workers);
+    backup_entries.reserve(num_workers);
+    for (auto i = 0; i < num_workers; i++) {
+        inputs.push_back(new net_t[in_size * batch_size]);
+        backup_entries.push_back(new BackupEntry[batch_size]);
+    }
+    writing_location = new std::atomic<int>[batch_size]();
+    written_location = new std::atomic<int>[batch_size]();
+    mutex = new std::mutex[num_workers];
+    cv = new std::condition_variable[num_workers];
 }
 
 template <typename net_t>
