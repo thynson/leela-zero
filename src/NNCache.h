@@ -37,7 +37,7 @@ public:
     static constexpr int MAX_CACHE_COUNT = 150'000;
 
     // Minimum size of the cache in number of items.
-    static constexpr int MIN_CACHE_COUNT = 6'000;
+    static constexpr int MIN_CACHE_COUNT = 1;
 
     struct Netresult {
         // 19x19 board positions

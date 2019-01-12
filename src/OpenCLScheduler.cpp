@@ -117,26 +117,31 @@ void OpenCLScheduler<net_t>::initialize(const int channels) {
     else while (cfg_batch_size.size() < num_gpus)
         cfg_batch_size.push_back(cfg_batch_size.back());
 
-    auto queue_size = 1;
+    len = 1;
     auto gnum = 0;
     for (auto & opencl : m_opencl)
-        queue_size += cfg_workers[gnum++];
-    empty_workers.resize(queue_size);
-    unfull_workers.resize(queue_size);
+        len += cfg_workers[gnum++];
+    int num_workers = len;
+    auto count = 0;
+    while (len) len >>= 1, count++;
+    len = 2 << count;
+    empty_workers.resize(len);
+    unfull_workers.resize(len);
+    len--;
 
-    auto num_workers = cfg_workers;
-    auto count = 1;
+    auto cfg_workers_cpy = cfg_workers;
+    count = 1;
     // set up initial empty workers queue to be evenly distributed among all GPUs
-    while (count < queue_size) {
+    while (count < num_workers) {
         auto gnum = 0;
         for (auto& opencl : m_opencl) {
-            auto& num = num_workers[gnum];
+            auto& num = cfg_workers_cpy[gnum];
             if (num)
-                empty_workers.push_back({ gnum,--num }), count++;
+                empty_workers[count++] = {gnum,--num};
             gnum++;
         }
     }
-    empty_workers_writing = empty_workers_written = queue_size - 1;
+    empty_workers_writing = empty_workers_written = num_workers - 1;
 
     constexpr auto in_size = Network::INPUT_CHANNELS * BOARD_SIZE * BOARD_SIZE;
 
@@ -146,8 +151,8 @@ void OpenCLScheduler<net_t>::initialize(const int channels) {
         auto num_workers = cfg_workers[gnum];
         opencl->initialize(channels, num_workers, batchsize);
 
-        for (auto i = unsigned{0}; i < num_workers; i++) {
-            auto t = std::thread(&OpenCLScheduler<net_t>::batch_worker, this, gnum, i);
+        for (int i = num_workers; i > 0; ) {
+            auto t = std::thread(&OpenCLScheduler<net_t>::batch_worker, this, gnum, --i);
             m_worker_threads.push_back(std::move(t));
         }
         gnum++;
@@ -309,12 +314,44 @@ void OpenCLScheduler<net_t>::forward(const std::vector<float>& input,
 }
 
 template <typename net_t>
-void OpenCLScheduler<net_t>::forward0(std::unique_ptr<const std::vector<float>> input,
+void OpenCLScheduler<net_t>::append(int gpu, int i, std::vector<std::pair<int,int>>& list, std::atomic<int>& writing, std::atomic<int>& written) {
+    auto writing_val = writing.load();
+    fetch_add 
+    while (!writing.compare_exchange_strong(writing_val, // next(writing_val + 1)) writing_val = writing;
+    list[writing]
+       
+}
+
+template <typename net_t>
+void OpenCLScheduler<net_t>::forward0(const std::vector<float>& input,
                                       const int tomove,
                                       const int symmetry,
                                       Netresult_ptr result) {
 
     m_search->m_positions++;
+
+    // first check the "empty" workers which haven't received any position to evaluate
+    while (true) {
+        auto head = empty_workers_head.load();
+        if (head == empty_workers_written) break;
+        if (empty_workers_head.compare_exchange_strong(head, next(head))) {
+            int gpu, i;
+            std::tie(gpu,i) = empty_workers[head];
+            auto& opencl = m_opencl[gpu];
+            std::transform(input.begin(), input.end(), opencl->inputs[i], [](float x) {return (net_t)x; });
+            opencl->backup_entries[i] = {tomove, symmetry, result};
+            opencl->writing_location = opencl->written_location = 1;
+            if (!opencl->m_occupied) opencl->cv[i].notify_one();
+            else if (opencl->m_batch_size > 1)
+                append(gpu, i, unfull_workers, unfull_workers_writing, unfull_workers_written);
+            return;
+        }
+    }
+
+    // check workers that don't have a full batch
+
+
+
     std::unique_lock<std::mutex> lk(m_mutex);
     m_forward_queue0.push_back(std::make_unique<ForwardQueueEntry0>(
         std::move(input), tomove, symmetry, result));

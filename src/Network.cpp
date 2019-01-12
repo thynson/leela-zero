@@ -817,8 +817,7 @@ void Network::get_output0(
         }
 #endif
     }
-    m_forward->forward0(std::make_unique<const std::vector<float>>(gather_features(state, symmetry)),
-        state->get_to_move(), symmetry, result);
+    m_forward->forward0(gather_features(state, symmetry), state->get_to_move(), symmetry, result);
 }
 
 Network::Netresult Network::get_output(

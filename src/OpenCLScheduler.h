@@ -69,7 +69,7 @@ public:
     virtual void forward(const std::vector<float>& input,
                          std::vector<float>& output_pol,
                          std::vector<float>& output_val);
-    virtual void forward0(std::unique_ptr<const std::vector<float>> input,
+    virtual void forward0(const std::vector<float>& input,
                           const int tomove,
                           const int symmetry,
                           Netresult_ptr result);
@@ -98,14 +98,15 @@ private:
 
     std::list<std::thread> m_worker_threads;
 
+    unsigned len;
     std::vector<std::pair<int, int>> empty_workers; // cyclic buffer, <gpu num, worker thread num>
     std::vector<std::pair<int, int>> unfull_workers; // cyclic buffer
-    std::atomic<int> empty_workers_head{0};
-    std::atomic<int> empty_workers_writing{0};
-    std::atomic<int> empty_workers_written{0};
-    std::atomic<int> unfull_workers_head{0};
-    std::atomic<int> unfull_workers_writing{0};
-    std::atomic<int> unfull_workers_written{0};
+    std::atomic<unsigned> empty_workers_head{0};
+    std::atomic<unsigned> empty_workers_writing{0};
+    std::atomic<unsigned> empty_workers_written{0};
+    std::atomic<unsigned> unfull_workers_head{0};
+    std::atomic<unsigned> unfull_workers_writing{0};
+    std::atomic<unsigned> unfull_workers_written{0};
 
     void clear_stats() {
         for (auto& opencl : m_opencl) {
