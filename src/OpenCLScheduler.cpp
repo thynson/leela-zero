@@ -314,56 +314,64 @@ void OpenCLScheduler<net_t>::forward(const std::vector<float>& input,
 }
 
 template <typename net_t>
-void OpenCLScheduler<net_t>::append(int gpu, int i, std::vector<std::pair<int,int>>& list, std::atomic<int>& writing, std::atomic<int>& written) {
-    auto writing_val = writing.load();
-    fetch_add 
-    while (!writing.compare_exchange_strong(writing_val, // next(writing_val + 1)) writing_val = writing;
-    list[writing]
-       
-}
-
-template <typename net_t>
 void OpenCLScheduler<net_t>::forward0(const std::vector<float>& input,
                                       const int tomove,
                                       const int symmetry,
                                       Netresult_ptr result) {
 
+    constexpr auto in_size = Network::INPUT_CHANNELS * BOARD_SIZE * BOARD_SIZE;
     m_search->m_positions++;
 
     // first check the "empty" workers which haven't received any position to evaluate
     while (true) {
         auto head = empty_workers_head.load();
-        if (head == empty_workers_written) break;
-        if (empty_workers_head.compare_exchange_strong(head, next(head))) {
+        if (head == workers_written) {
+            head = unfull_workers_head.load();
+            if (head == workers_written) {
+                // writing failure, completely full
+                std::unique_lock<std::mutex> lk(m_mutex);
+                m_cv.wait(lk, [this] { return unfull_workers_head < workers_written; });
+                continue;
+            }
+            else {
+                int gpu, i;
+                std::tie(gpu, i) = unfull_workers[head & len];
+                auto& opencl = m_opencl[gpu];
+                auto loc = opencl->writing_location[i].fetch_add(1);
+                if (loc >= opencl->m_batch_size) {
+                    if (loc == opencl->m_batchsize) unfull_workers_head++;
+                    opencl->writing_location[i]--;
+                    continue;
+                }
+                std::transform(input.begin(), input.end(), 
+                    opencl->inputs[i] + in_size * loc,
+                    [](float x) {return (net_t)x; });
+                opencl->backup_entries[i][loc] = { tomove, symmetry, result };
+                auto loc_ = loc;
+                while (!opencl->written_location[i].compare_exchange_weak(loc_, loc_ + 1)) {
+                    if (opencl->written_location[i] == opencl->m_batchsize) {
+                        // writing abort
+                        opencl->writing_location[i]--;
+                        continue;
+                    }
+                    loc_ = loc;
+                }
+                if (loc + 1 == opencl->m_batch_size) opencl->cv[i].notify_one();
+                return;
+            }
+        }
+        else {
+            if (!empty_workers_head.compare_exchange_strong(head, head + 1)) continue;
             int gpu, i;
-            std::tie(gpu,i) = empty_workers[head];
+            std::tie(gpu, i) = unfull_workers[head & len];
             auto& opencl = m_opencl[gpu];
             std::transform(input.begin(), input.end(), opencl->inputs[i], [](float x) {return (net_t)x; });
-            opencl->backup_entries[i] = {tomove, symmetry, result};
-            opencl->writing_location = opencl->written_location = 1;
-            if (!opencl->m_occupied) opencl->cv[i].notify_one();
-            else if (opencl->m_batch_size > 1)
-                append(gpu, i, unfull_workers, unfull_workers_writing, unfull_workers_written);
+            opencl->backup_entries[i][0] = { tomove, symmetry, result };
+            opencl->writing_location[i] = opencl->written_location[i] = 1;
+            if (!opencl->m_occupied || opencl->m_batch_size == 1) opencl->cv[i].notify_one();
             return;
         }
     }
-
-    // check workers that don't have a full batch
-
-
-
-    std::unique_lock<std::mutex> lk(m_mutex);
-    m_forward_queue0.push_back(std::make_unique<ForwardQueueEntry0>(
-        std::move(input), tomove, symmetry, result));
-    m_cv.notify_one();
-    /*
-    if (m_search->m_run && (int)m_forward_queue0.size() >= m_max_queue_size.load()) {
-        m_cv0.wait(lk, [&] { return (int)m_forward_queue0.size() < m_max_queue_size.load()
-            || !m_search->m_run; });
-        //lk.unlock();
-        //m_search->backup();
-    }
-    */
 }
 
 template <typename net_t>

@@ -83,7 +83,7 @@ private:
     std::vector<std::unique_ptr<OpenCL_Network<net_t>>> m_networks;
     std::vector<std::unique_ptr<OpenCL<net_t>>> m_opencl;
 
-    //std::mutex m_mutex;
+    std::mutex m_mutex;
     std::condition_variable m_cv;
     //std::condition_variable m_cv0;
 
@@ -99,14 +99,11 @@ private:
     std::list<std::thread> m_worker_threads;
 
     unsigned len;
-    std::vector<std::pair<int, int>> empty_workers; // cyclic buffer, <gpu num, worker thread num>
-    std::vector<std::pair<int, int>> unfull_workers; // cyclic buffer
+    std::vector<std::pair<int, int>> unfull_workers; // cyclic buffer, {gpu num, worker thread num}
     std::atomic<unsigned> empty_workers_head{0};
-    std::atomic<unsigned> empty_workers_writing{0};
-    std::atomic<unsigned> empty_workers_written{0};
     std::atomic<unsigned> unfull_workers_head{0};
-    std::atomic<unsigned> unfull_workers_writing{0};
-    std::atomic<unsigned> unfull_workers_written{0};
+    std::atomic<unsigned> workers_writing{0};
+    std::atomic<unsigned> workers_written{0};
 
     void clear_stats() {
         for (auto& opencl : m_opencl) {
