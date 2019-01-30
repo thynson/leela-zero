@@ -2008,16 +2008,7 @@ public:
      *
      *  \see Context::getDefault()
      */
-    static Device getDefault(
-        cl_int *errResult = NULL)
-    {
-        std::call_once(default_initialized_, makeDefault);
-        detail::errHandler(default_error_);
-        if (errResult != NULL) {
-            *errResult = default_error_;
-        }
-        return default_;
-    }
+    static Device getDefault(cl_int *errResult = NULL);
 
     /**
     * Modify the default device to be used by
@@ -2026,12 +2017,7 @@ public:
     * @return updated default device.
     *         Should be compared to the passed value to ensure that it was updated.
     */
-    static Device setDefault(const Device &default_device)
-    {
-        std::call_once(default_initialized_, makeDefaultProvided, std::cref(default_device));
-        detail::errHandler(default_error_);
-        return default_;
-    }
+    static Device setDefault(const Device &default_device);
 
     /*! \brief Assignment operator from cl_device_id.
      * 
@@ -2200,52 +2186,14 @@ private:
     * This sets @c default_ and @c default_error_. It does not throw
     * @c cl::Error.
     */
-    static void makeDefault() {
-        /* Throwing an exception from a call_once invocation does not do
-        * what we wish, so we catch it and save the error.
-        */
-#if defined(CL_HPP_ENABLE_EXCEPTIONS)
-        try
-#endif
-        {
-            // If default wasn't passed ,generate one
-            // Otherwise set it
-            cl_uint n = 0;
-
-            cl_int err = ::clGetPlatformIDs(0, NULL, &n);
-            if (err != CL_SUCCESS) {
-                default_error_ = err;
-                return;
-            }
-            if (n == 0) {
-                default_error_ = CL_INVALID_PLATFORM;
-                return;
-            }
-
-            vector<cl_platform_id> ids(n);
-            err = ::clGetPlatformIDs(n, ids.data(), NULL);
-            if (err != CL_SUCCESS) {
-                default_error_ = err;
-                return;
-            }
-
-            default_ = Platform(ids[0]);
-        }
-#if defined(CL_HPP_ENABLE_EXCEPTIONS)
-        catch (cl::Error &e) {
-            default_error_ = e.err();
-        }
-#endif
-    }
+    static void makeDefault();
 
     /*! \brief Create the default platform from a provided platform.
      *
      * This sets @c default_. It does not throw
      * @c cl::Error.
      */
-    static void makeDefaultProvided(const Platform &p) {
-       default_ = p;
-    }
+    static void makeDefaultProvided(const Platform &p);
     
 public:
 #ifdef CL_HPP_UNIT_TEST_ENABLE
@@ -2284,15 +2232,7 @@ public:
     }
 
     static Platform getDefault(
-        cl_int *errResult = NULL)
-    {
-        std::call_once(default_initialized_, makeDefault);
-        detail::errHandler(default_error_);
-        if (errResult != NULL) {
-            *errResult = default_error_;
-        }
-        return default_;
-    }
+        cl_int *errResult = NULL);
 
     /**
      * Modify the default platform to be used by 
@@ -2301,12 +2241,7 @@ public:
      * @return updated default platform. 
      *         Should be compared to the passed value to ensure that it was updated.
      */
-    static Platform setDefault(const Platform &default_platform)
-    {
-        std::call_once(default_initialized_, makeDefaultProvided, std::cref(default_platform));
-        detail::errHandler(default_error_);
-        return default_;
-    }
+    static Platform setDefault(const Platform &default_platform);
 
     //! \brief Wrapper for clGetPlatformInfo().
     cl_int getInfo(cl_platform_info name, string* param) const
@@ -2813,15 +2748,7 @@ public:
      *
      *  \note All calls to this function return the same cl_context as the first.
      */
-    static Context getDefault(cl_int * err = NULL) 
-    {
-        std::call_once(default_initialized_, makeDefault);
-        detail::errHandler(default_error_);
-        if (err != NULL) {
-            *err = default_error_;
-        }
-        return default_;
-    }
+    static Context getDefault(cl_int * err = NULL);
 
     /**
      * Modify the default context to be used by
@@ -2830,12 +2757,7 @@ public:
      * @return updated default context.
      *         Should be compared to the passed value to ensure that it was updated.
      */
-    static Context setDefault(const Context &default_context)
-    {
-        std::call_once(default_initialized_, makeDefaultProvided, std::cref(default_context));
-        detail::errHandler(default_error_);
-        return default_;
-    }
+    static Context setDefault(const Context &default_context);
 
     //! \brief Default constructor - initializes to NULL.
     Context() : detail::Wrapper<cl_type>() { }
@@ -6614,6 +6536,11 @@ inline QueueProperties operator|(QueueProperties lhs, QueueProperties rhs)
 class CommandQueue : public detail::Wrapper<cl_command_queue>
 {
 private:
+#if CL_HPP_TARGET_OPENCL_VERSION >= 200
+    static constexpr auto default_create_error = __CREATE_COMMAND_QUEUE_WITH_PROPERTIES_ERR;
+#else
+    static constexpr auto default_create_error = __CREATE_COMMAND_QUEUE_ERR;
+#endif
     static std::once_flag default_initialized_;
     static CommandQueue default_;
     static cl_int default_error_;
@@ -7033,19 +6960,7 @@ public:
 #endif // CL_HPP_MINIMUM_OPENCL_VERSION < 200
     }
 
-    static CommandQueue getDefault(cl_int * err = NULL) 
-    {
-        std::call_once(default_initialized_, makeDefault);
-#if CL_HPP_TARGET_OPENCL_VERSION >= 200
-        detail::errHandler(default_error_, __CREATE_COMMAND_QUEUE_WITH_PROPERTIES_ERR);
-#else // CL_HPP_TARGET_OPENCL_VERSION >= 200
-        detail::errHandler(default_error_, __CREATE_COMMAND_QUEUE_ERR);
-#endif // CL_HPP_TARGET_OPENCL_VERSION >= 200
-        if (err != NULL) {
-            *err = default_error_;
-        }
-        return default_;
-    }
+    static CommandQueue getDefault(cl_int * err = NULL);
 
     /**
      * Modify the default command queue to be used by
@@ -7054,12 +6969,7 @@ public:
      * @return updated default command queue.
      *         Should be compared to the passed value to ensure that it was updated.
      */
-    static CommandQueue setDefault(const CommandQueue &default_queue)
-    {
-        std::call_once(default_initialized_, makeDefaultProvided, std::cref(default_queue));
-        detail::errHandler(default_error_);
-        return default_;
-    }
+    static CommandQueue setDefault(const CommandQueue &default_queue);
 
     CommandQueue() { }
 
@@ -9651,7 +9561,7 @@ namespace compatibility {
 #undef __CREATE_PIPE_ERR
 #undef __GET_PIPE_INFO_ERR
 
-#endif //CL_HPP_USER_OVERRIDE_ERROR_STRINGS
+#endif //C_HPP_USER_OVERRIDE_ERROR_STRINGS
 
 // Extensions
 #undef CL_HPP_INIT_CL_EXT_FCN_PTR_
