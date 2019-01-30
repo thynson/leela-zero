@@ -226,7 +226,6 @@ private:
     std::mutex* mutex;
     std::condition_variable* cv;
 
-
     cl::Program m_program;
     std::string m_cl_args;
 

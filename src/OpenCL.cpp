@@ -310,7 +310,8 @@ void OpenCL_Network<net_t>::forward(const net_t* input,
     
     if (--m_opencl.m_occupied == 0) m_opencl.idle_count++; 
     //probably should first acquire lock to the gpu queue's mutex..
-    cv.notify_all();
+    // cv.notify_all();
+    // ask openclscheduler to notify the first worker in buffer that belongs to this gpu
 
     auto polptr = static_cast<net_t*>(pinnedOutBufferHost_pol);
     auto valptr = static_cast<net_t*>(pinnedOutBufferHost_val);
