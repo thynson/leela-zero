@@ -1961,7 +1961,6 @@ struct ImageFormat : public cl_image_format
 class Device : public detail::Wrapper<cl_device_id>
 {
 private:
-    static std::once_flag default_initialized_;
     static Device default_;
     static cl_int default_error_;
 
@@ -2177,7 +2176,6 @@ public:
 class Platform : public detail::Wrapper<cl_platform_id>
 {
 private:
-    static std::once_flag default_initialized_;
     static Platform default_;
     static cl_int default_error_;
 
@@ -2503,7 +2501,6 @@ class Context
     : public detail::Wrapper<cl_context>
 {
 private:
-    static std::once_flag default_initialized_;
     static Context default_;
     static cl_int default_error_;
 
@@ -6541,7 +6538,6 @@ private:
 #else
     static constexpr auto default_create_error = __CREATE_COMMAND_QUEUE_ERR;
 #endif
-    static std::once_flag default_initialized_;
     static CommandQueue default_;
     static cl_int default_error_;
 

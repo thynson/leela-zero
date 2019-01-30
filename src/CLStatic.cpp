@@ -1,13 +1,13 @@
 #include "OpenCL.h"
 namespace cl {
 
-    std::once_flag Device::default_initialized_;
+    static std::once_flag device_default_initialized_;
     Device Device::default_;
     cl_int Device::default_error_ = CL_SUCCESS;
 
     Device Device::getDefault(cl_int *errResult)
     {
-        std::call_once(default_initialized_, makeDefault);
+        std::call_once(device_default_initialized_, makeDefault);
         detail::errHandler(default_error_);
         if (errResult != NULL) {
             *errResult = default_error_;
@@ -16,12 +16,12 @@ namespace cl {
     }
     Device Device::setDefault(const Device &default_device)
     {
-        std::call_once(default_initialized_, makeDefaultProvided, std::cref(default_device));
+        std::call_once(device_default_initialized_, makeDefaultProvided, std::cref(default_device));
         detail::errHandler(default_error_);
         return default_;
     }
 
-    std::once_flag Platform::default_initialized_;
+    static std::once_flag platform_default_initialized_;
     Platform Platform::default_;
     cl_int Platform::default_error_ = CL_SUCCESS;
 
@@ -33,7 +33,7 @@ namespace cl {
     Platform Platform::getDefault(
         cl_int *errResult)
     {
-        std::call_once(default_initialized_, makeDefault);
+        std::call_once(platform_default_initialized_, makeDefault);
         detail::errHandler(default_error_);
         if (errResult != NULL) {
             *errResult = default_error_;
@@ -42,7 +42,7 @@ namespace cl {
     }
     Platform Platform::setDefault(const Platform &default_platform)
     {
-        std::call_once(default_initialized_, makeDefaultProvided, std::cref(default_platform));
+        std::call_once(platform_default_initialized_, makeDefaultProvided, std::cref(default_platform));
         detail::errHandler(default_error_);
         return default_;
     }
@@ -85,13 +85,13 @@ namespace cl {
 #endif
     }
 
-    std::once_flag Context::default_initialized_;
+    static std::once_flag context_default_initialized_;
     Context Context::default_;
     cl_int Context::default_error_ = CL_SUCCESS;
 
     Context Context::getDefault(cl_int * err)
     {
-        std::call_once(default_initialized_, makeDefault);
+        std::call_once(context_default_initialized_, makeDefault);
         detail::errHandler(default_error_);
         if (err != NULL) {
             *err = default_error_;
@@ -100,18 +100,18 @@ namespace cl {
     }
     Context Context::setDefault(const Context &default_context)
     {
-        std::call_once(default_initialized_, makeDefaultProvided, std::cref(default_context));
+        std::call_once(context_default_initialized_, makeDefaultProvided, std::cref(default_context));
         detail::errHandler(default_error_);
         return default_;
     }
 
-    std::once_flag CommandQueue::default_initialized_;
+    static std::once_flag command_queue_default_initialized_;
     CommandQueue CommandQueue::default_;
     cl_int CommandQueue::default_error_ = CL_SUCCESS;
 
     CommandQueue CommandQueue::getDefault(cl_int * err)
     {
-        std::call_once(default_initialized_, makeDefault);
+        std::call_once(command_queue_default_initialized_, makeDefault);
         detail::errHandler(default_error_, default_create_error);
         if (err != NULL) {
             *err = default_error_;
@@ -121,7 +121,7 @@ namespace cl {
 
     CommandQueue CommandQueue::setDefault(const CommandQueue &default_queue)
     {
-        std::call_once(default_initialized_, makeDefaultProvided, std::cref(default_queue));
+        std::call_once(command_queue_default_initialized_, makeDefaultProvided, std::cref(default_queue));
         detail::errHandler(default_error_);
         return default_;
     }
