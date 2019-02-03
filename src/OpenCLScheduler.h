@@ -31,6 +31,7 @@
 
 template <typename net_t>
 class OpenCLScheduler : public ForwardPipe {
+    friend class OpenCL_Network<net_t>;
     class ContextPoolEntry {
     public:
         size_t net_index;

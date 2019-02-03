@@ -54,7 +54,7 @@ public:
     virtual void forward(const std::vector<float>& input,
                          std::vector<float>& output_pol,
                          std::vector<float>& output_val) = 0;    
-    virtual void forward0(std::unique_ptr<const std::vector<float>> input,
+    virtual void forward0(const std::vector<float>& input,
                           const int tomove,
                           const int symmetry,
                           Netresult_ptr result) = 0;

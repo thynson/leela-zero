@@ -142,7 +142,7 @@ public:
             std::vector<float>& output_pol,
             std::vector<float>& output_val,
             OpenCLContext & opencl_context,
-            std::condition_variable& cv,
+            OpenCLScheduler<net_t>& scheduler,
             const int batch_size = 1);
 
 private:
@@ -218,6 +218,7 @@ private:
     std::atomic<int> m_occupied{0};
     std::atomic<int> idle_count{0};
 
+    std::atomic_flag* buffer_flag;
     std::atomic<int>* batch_stats;
     std::vector<net_t*> inputs;
     std::vector<BackupEntry*> backup_entries; // one-one correspond to inputs

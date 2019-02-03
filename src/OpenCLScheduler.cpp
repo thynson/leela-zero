@@ -25,6 +25,9 @@
 #include "Utils.h"
 #include "OpenCLScheduler.h"
 
+#include <chrono>
+
+using namespace std::chrono_literals;
 using Utils::ceilMultiple;
 using Utils::myprintf;
 
@@ -117,15 +120,14 @@ void OpenCLScheduler<net_t>::initialize(const int channels) {
     else while (cfg_batch_size.size() < num_gpus)
         cfg_batch_size.push_back(cfg_batch_size.back());
 
-    len = 1;
+    int num_workers = 0;
     auto gnum = 0;
     for (auto & opencl : m_opencl)
-        len += cfg_workers[gnum++];
-    int num_workers = len;
+        num_workers += cfg_workers[gnum++];
+    len = num_workers + 2;
     auto count = 0;
     while (len) len >>= 1, count++;
-    len = 2 << count;
-    empty_workers.resize(len);
+    len = 1 << count;
     unfull_workers.resize(len);
     len--;
 
@@ -137,11 +139,11 @@ void OpenCLScheduler<net_t>::initialize(const int channels) {
         for (auto& opencl : m_opencl) {
             auto& num = cfg_workers_cpy[gnum];
             if (num)
-                empty_workers[count++] = {gnum,--num};
+                unfull_workers[count++] = {gnum,--num};
             gnum++;
         }
     }
-    empty_workers_writing = empty_workers_written = num_workers - 1;
+    workers_writing = workers_written = num_workers;
 
     constexpr auto in_size = Network::INPUT_CHANNELS * BOARD_SIZE * BOARD_SIZE;
 
@@ -322,7 +324,7 @@ void OpenCLScheduler<net_t>::forward0(const std::vector<float>& input,
     constexpr auto in_size = Network::INPUT_CHANNELS * BOARD_SIZE * BOARD_SIZE;
     m_search->m_positions++;
 
-    // first check the "empty" workers which haven't received any position to evaluate
+    // first check the "empty" workers, i.e. those that haven't received any position to evaluate
     while (true) {
         auto head = empty_workers_head.load();
         if (head == workers_written) {
@@ -330,8 +332,9 @@ void OpenCLScheduler<net_t>::forward0(const std::vector<float>& input,
 
             // all workers are full, wait
             if (head == workers_written) {
-                std::unique_lock<std::mutex> lk(m_mutex);
-                m_cv.wait(lk, [this] { return unfull_workers_head < workers_written; });
+                std::unique_lock<std::mutex> lk(m_mutex, std::try_to_lock);
+                if (lk.owns_lock())
+                    m_cv.wait_for(lk, 1ms, [this] { return unfull_workers_head != workers_written; });
                 continue;
             }
 
@@ -340,34 +343,49 @@ void OpenCLScheduler<net_t>::forward0(const std::vector<float>& input,
             int gpu, i;
             std::tie(gpu, i) = unfull_workers[head & len];
             auto& opencl = m_opencl[gpu];
-            int expected = opencl->m_batch_size + 1;
-            if (opencl->written_location[i].compare_exchange_strong(expected, 0) {
-                // worker already picked up requests before becoming full 
-                unfull_workers_head++;
+            auto& writing_loc = opencl->writing_location[i];
+            auto& written_loc = opencl->written_location[i];
+            auto batch_size = opencl->m_batch_size;
+
+            auto loc = writing_loc.load();
+            if (loc < 0) {
+                // worker has sent to GPU or is full, can't write
+                if (!opencl->buffer_flag[i].test_and_set()) {
+                    if (writing_loc < 0) {
+                        unfull_workers_head++;
+                        continue;
+                    }
+                    else opencl->buffer_flag[i].clear();
+                }
+            }
+            loc = writing_loc.fetch_add(1);
+            if (loc < 0 || loc >= batch_size) {
+                writing_loc--;
                 continue;
             }
-            auto loc = opencl->writing_location[i].fetch_add(1);
-            if (loc >= opencl->m_batch_size) {
-                // worker full, can't write
-                opencl->writing_location[i]--;
-                continue;
-            }
-            if (loc == opencl->m_batch_size - 1 && opencl->m_batch_size > 1)
+
+            if (loc + 1 == batch_size && !opencl->buffer_flag[i].test_and_set())
                 unfull_workers_head++;
+
             std::transform(input.begin(), input.end(),
                 opencl->inputs[i] + in_size * loc,
                 [](float x) {return (net_t)x; });
             opencl->backup_entries[i][loc] = { tomove, symmetry, result };
             auto loc_ = loc;
-            while (!opencl->written_location[i].compare_exchange_weak(loc_, loc_ + 1)) {
-                if (loc_ == opencl->m_batchsize + 1) {
+            auto success = true;
+            while (!written_loc.compare_exchange_strong(loc_, loc_ + 1)) {
+                if (loc_ == batch_size) {
                     // worker already picked up requests before becoming full, abort writing
-                    opencl->writing_location[i]--;
-                    continue;
+                    if (!opencl->buffer_flag[i].test_and_set())
+                        unfull_workers_head++;
+                    writing_loc--;
+                    success = false;
+                    break;
                 }
                 loc_ = loc;
             }
-            if (loc + 1 == opencl->m_batch_size) opencl->cv[i].notify_one();
+            if (!success) continue;
+            if (loc + 1 == batch_size) opencl->cv[i].notify_one();
             return;
         }
 
@@ -377,9 +395,12 @@ void OpenCLScheduler<net_t>::forward0(const std::vector<float>& input,
         int gpu, i;
         std::tie(gpu, i) = unfull_workers[head & len];
         auto& opencl = m_opencl[gpu];
+        auto expected = -cfg_num_threads - 2;
+        while (!opencl->writing_location[i].compare_exchange_weak(expected, 1))
+            expected = -cfg_num_threads - 2;
         std::transform(input.begin(), input.end(), opencl->inputs[i], [](float x) {return (net_t)x; });
         opencl->backup_entries[i][0] = { tomove, symmetry, result };
-        opencl->writing_location[i] = opencl->written_location[i] = 1;
+        opencl->written_location[i] = 1;
         if (!opencl->m_occupied || opencl->m_batch_size == 1) opencl->cv[i].notify_one();
         return;
     }
@@ -394,10 +415,12 @@ void OpenCLScheduler<net_t>::batch_worker(const size_t gnum, const size_t i) {
 
     OpenCLContext context;
 
-    auto opencl = m_opencl[gnum];
+    auto& opencl = m_opencl[gnum];
     auto batch_size = opencl->m_batch_size;
     auto& writing_loc = opencl->writing_location[i];
     auto& written_loc = opencl->written_location[i];
+    auto& inputs = opencl->inputs[i];
+    auto& entries = opencl->backup_entries[i];
 
     auto batch_output_pol = std::vector<float>(out_pol_size * batch_size);
     auto batch_output_val = std::vector<float>(out_val_size * batch_size);
@@ -407,36 +430,45 @@ void OpenCLScheduler<net_t>::batch_worker(const size_t gnum, const size_t i) {
 
         if (written_loc == batch_size || (written_loc > 0 && !opencl->m_occupied)) {
             opencl->m_occupied++;
-            auto count = written_loc.exchange(batch_size + 1);
-            auto entered = writing_loc.fetch_add(batch_size - count); // used to determine whether 
-            opencl->batch_stats[count - 1]++;
+            writing_loc -= batch_size + cfg_num_threads + 2;
+            auto count = written_loc.exchange(batch_size);
 
             batch_output_pol.resize(out_pol_size * count);
             batch_output_val.resize(out_val_size * count);
 
-            m_networks[gnum]->forward(inputs, batch_output_pol, batch_output_val, context, this, count);
+            m_networks[gnum]->forward(inputs, batch_output_pol, batch_output_val, context, *this, count);
 
             for (auto index = 0; index < count; ) {
                 std::vector<float> out_p(begin(batch_output_pol) + out_pol_size * index,
                     begin(batch_output_pol) + out_pol_size * (index + 1));
                 std::vector<float> out_v(begin(batch_output_val) + out_val_size * index,
                     begin(batch_output_val) + out_val_size * (index + 1));
-                m_network->process_output(out_p, out_v, inputs[index]->tomove, 
-                    inputs[index]->symmetry, inputs[index]->result);
+                m_network->process_output(out_p, out_v, entries[index].tomove, 
+                    entries[index].symmetry, entries[index].result);
                 index++;
             }
+            opencl->batch_stats[count - 1]++;
+            writing_loc += batch_size - count;
 
-            // written = batch_size + 1 -> 0, if not success then wait ..
-            int expected = batch_size;
-            while (!writing_loc.compare_exchange_weak(expected, 0)) expected = batch_size;
-            // can still have threads entered from unfull (instead of empty)
-            // how to make sure never enter empty worker from unfull?
-            insert to the end;
-            m_cv.notify_all();
-
+            if (opencl->buffer_flag[i].test_and_set()) {
+                // insert at the end of cyclic buffer to signal that this worker is idle
+                auto tail = workers_writing.fetch_add(1);
+                auto tail_ = tail;
+                unfull_workers[tail] = { gnum, i };
+                while (!workers_written.compare_exchange_weak(tail, tail + 1)) tail = tail_;
+                opencl->buffer_flag[i].clear();
+                m_cv.notify_all();
+            }
+            else {
+                // reset writing_loc and written_loc
+                auto expected = batch_size;
+                written_loc = 0;
+                while (writing_loc.compare_exchange_weak(expected, 0)) expected = batch_size;
+                opencl->buffer_flag[i].clear();
+            }
         }
-        std::unique_lock<std::mutex> opencl->mutex[i];
-        opencl->cv[i].wait(lk, [this, &written_loc, batch_size, opencl] {
+        std::unique_lock<std::mutex> lk(opencl->mutex[i]);
+        opencl->cv[i].wait(lk, [this, &written_loc, batch_size, &opencl] {
             return !m_running || written_loc == batch_size || (written_loc > 0 && !opencl->m_occupied);
         });
     }
@@ -511,7 +543,6 @@ void OpenCLScheduler<net_t>::batch_worker(const size_t gnum, const size_t i) {
         // m_cv0.notify_all();
         //m_search->backup();
         //m_search->m_cv.notify_all();
-    }
 }
 
 template class OpenCLScheduler<float>;

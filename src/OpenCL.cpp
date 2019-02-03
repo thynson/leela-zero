@@ -137,7 +137,7 @@ void OpenCL_Network<net_t>::forward(const net_t* input,
                              std::vector<float>& output_pol,
                              std::vector<float>& output_val,
                              OpenCLContext & opencl_context,
-                             std::condition_variable& cv,
+                             OpenCLScheduler<net_t>& scheduler,
                              const int batch_size) {
     constexpr auto tiles = WINOGRAD_P;
     constexpr auto one_plane = NUM_INTERSECTIONS * sizeof(net_t);
@@ -303,15 +303,19 @@ void OpenCL_Network<net_t>::forward(const net_t* input,
     //std::unique_lock<std::mutex> enqueue_lock(m_enqueue_mutex);
     enqueue_lock.unlock();
     //std::unique_lock<std::mutex> finish_lock(m_queue_finish_mutex);
-     enqueue_lock.lock();
+    enqueue_lock.lock();
     queue.finish();
     //finish_lock.unlock();
      enqueue_lock.unlock();
     
-    if (--m_opencl.m_occupied == 0) m_opencl.idle_count++; 
+    if (--m_opencl.m_occupied == 0) m_opencl.idle_count++;
+    for (auto i = scheduler.unfull_workers_head.load(); i < scheduler.workers_written && !m_opencl.m_occupied; i++) {
+        int gpu, idx;
+        std::tie(gpu, idx) = scheduler.unfull_workers[scheduler.len & i];
+        if (m_opencl.written_location[idx] > 0)
+            m_opencl.cv[idx].notify_one();
+    }
     //probably should first acquire lock to the gpu queue's mutex..
-    // cv.notify_all();
-    // ask openclscheduler to notify the first worker in buffer that belongs to this gpu
 
     auto polptr = static_cast<net_t*>(pinnedOutBufferHost_pol);
     auto valptr = static_cast<net_t*>(pinnedOutBufferHost_val);
@@ -921,8 +925,13 @@ void OpenCL<net_t>::initialize(const int channels, int num_workers, int batch_si
         inputs.push_back(new net_t[in_size * batch_size]);
         backup_entries.push_back(new BackupEntry[batch_size]);
     }
-    writing_location = new std::atomic<int>[batch_size]();
-    written_location = new std::atomic<int>[batch_size]();
+    writing_location = new std::atomic<int>[num_workers];
+    written_location = new std::atomic<int>[num_workers](); // initialize to 0
+    std::fill_n(writing_location, num_workers, batch_size);
+    buffer_flag = new std::atomic_flag[num_workers];
+    for (auto i = 0; i < num_workers; i++)
+        buffer_flag[i].clear();
+    //std::fill_n(buffer_flag, num_workers, ATOMIC_FLAG_INIT);
     mutex = new std::mutex[num_workers];
     cv = new std::condition_variable[num_workers];
 }
