@@ -103,27 +103,13 @@ private:
     std::vector<std::pair<int, int>> unfull_workers; // cyclic buffer, {gpu num, worker thread num}
     std::atomic<unsigned> empty_workers_head{0};
     std::atomic<unsigned> unfull_workers_head{0};
-    std::atomic<unsigned> workers_writing{0};
-    std::atomic<unsigned> workers_written{0};
+    std::atomic<unsigned> workers_writing;
+    std::atomic<unsigned> workers_written;
 
-    void clear_stats() {
-        for (auto& opencl : m_opencl) {
-            opencl->idle_count = 0;
-            for (auto j = 0; j < opencl->m_batch_size; j++)
-                opencl->batch_stats[j] = 0;
-        }
-    }
+    std::atomic<int> write_aborts{0};
 
-    void dump_stats() {
-        myprintf("batch stats:\n");
-        auto idx = 0;
-        for (auto& opencl : m_opencl) {
-            myprintf("GPU %d: \t", idx++);
-            for (auto j = 0; j < opencl->m_batch_size; j++)
-                myprintf("%d, ", opencl->batch_stats[j].load());
-            myprintf("\nidle count: %d\n", opencl->idle_count.load());
-        }
-    }
+    void clear_stats();
+    void dump_stats();
 
     void batch_worker(const size_t gnum, const size_t i);
     void push_input_convolution(unsigned int filter_size,

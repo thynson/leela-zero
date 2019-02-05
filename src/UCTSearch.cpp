@@ -96,6 +96,10 @@ UCTSearch::UCTSearch(GameState& g, Network& network)
 
 UCTSearch::~UCTSearch() {
     m_terminate = true;
+    {
+        std::lock_guard<std::mutex> lk(m_mutex);
+        m_cv.notify_all();
+    }
     m_search_threads.wait_all();
     m_delete_futures.wait_all();
 }
@@ -458,6 +462,7 @@ void UCTSearch::dump_stats(FastState & state, UCTNode & parent) {
 
     parent.acquire_reader();
     if (parent.get_first_child()->first_visit()) {
+        parent.release_reader();
         return;
     }
 
@@ -489,6 +494,7 @@ void UCTSearch::output_analysis(FastState & state, UCTNode & parent) {
 
     parent.acquire_reader();
     if (!parent.has_children()) {
+        parent.release_reader();
         return;
     }
 
@@ -749,7 +755,7 @@ std::string UCTSearch::get_pv(FastState & state, UCTNode& parent) {
         return std::string();
     }
 
-    // now can just acquire_reader, but may not worth doing it..
+    // now can just acquire_reader, but may not be worth doing it..
     if (parent.expandable()) {
         // Not fully expanded. This means someone could expand
         // the node while we want to traverse the children.

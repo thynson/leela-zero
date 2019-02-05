@@ -927,8 +927,7 @@ void Network::process_output(
 
     result->result.policy_pass = outputs[NUM_INTERSECTIONS];
     result->result.winrate = winrate;
-    //bool expected = false;
-    while (result->ready.test_and_set()); //{ expected = false; }
+    while (result->ready.test_and_set());
     auto obligations = std::move(result->backup_obligations);
     for (auto& bd : obligations) {
         m_search->backup(bd, result);
@@ -938,8 +937,6 @@ void Network::process_output(
     m_search->min_pending_netresults = std::min(m_search->min_pending_netresults.load(),
                                                 m_search->pending_netresults.load());
 #endif
-    //lock?
-    //m_search->m_cv.notify_one();
 }
 
 Network::Netresult Network::get_output_internal(

@@ -217,6 +217,7 @@ private:
 
     std::atomic<int> m_occupied{0};
     std::atomic<int> idle_count{0};
+    std::atomic<int>* rounds;
 
     std::atomic_flag* buffer_flag;
     std::atomic<int>* batch_stats;
@@ -224,7 +225,7 @@ private:
     std::vector<BackupEntry*> backup_entries; // one-one correspond to inputs
     std::atomic<int>* writing_location;
     std::atomic<int>* written_location;
-    std::mutex* mutex;
+    std::mutex mutex;
     std::condition_variable* cv;
 
     cl::Program m_program;

@@ -19,6 +19,7 @@
 #ifndef CONFIG_H_INCLUDED
 #define CONFIG_H_INCLUDED
 
+#define SCHEDULE_DEBUG
 #define ACCUM_DEBUG
 //#define LOCK_DEBUG
 //#define UCT_SOFTMAX
