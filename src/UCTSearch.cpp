@@ -377,7 +377,6 @@ void UCTSearch::play_simulation(std::unique_ptr<GameState> currstate,
         // end of game
         if (currstate->get_passes() >= 2) {
             bd.eval = eval_from_score(currstate->final_score());
-            node->acquire_reader();
             node->update(bd.eval, 1, 1.0f, factor);
             backup(bd, 1);
             return;
