@@ -239,7 +239,7 @@ SearchResult UCTSearch::play_simulation(GameState & currstate,
     if (node->expandable()) {
         if (currstate.get_passes() >= 2) {
             float score = currstate.final_score();
-            node->update(score, 1.0f);
+            node->update(score, 0.0f);
             return SearchResult::from_score(
                     score,
                     node->get_policy());
@@ -250,7 +250,7 @@ SearchResult UCTSearch::play_simulation(GameState & currstate,
                 node->create_children(m_network, m_nodes, currstate, eval,
                                       get_min_psa_ratio());
             if (!had_children && success) {
-                node->update(eval, 1.0f);
+                node->update(eval, 0.0f);
                 node->virtual_loss_undo();
                 return SearchResult::from_eval(
                         eval,

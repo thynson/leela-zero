@@ -318,24 +318,24 @@ UCTNode* UCTNode::uct_select_child(int color, bool is_root) {
     wait_expanded();
 
     // Count parentvisits manually to avoid issues with transpositions.
-    auto total_visited_policy = 0.0f;
-    auto parentvisits = size_t{0};
-    auto numerator = sqrt(1.0 + get_policy_sum()) - 1.0; //
-    for (const auto& child : m_children) {
-        if (child.valid()) {
-            parentvisits += child.get_visits();
-            if (child.get_visits() > 0) {
-                total_visited_policy += child.get_policy();
-//                numerator += child.get_visits() - child.get_policy_sum();
-            }
-        }
-    }
+//    auto total_visited_policy = 0.0f;
+//    auto parentvisits = size_t{0};
+    auto numerator = sqrt(get_policy_sum()) - 1.0; // ensure
+//    for (const auto& child : m_children) {
+//        if (child.valid()) {
+//            parentvisits += child.get_visits();
+//            if (child.get_visits() > 0) {
+//                total_visited_policy += child.get_policy();
+////                numerator += child.get_visits() - child.get_policy_sum();
+//            }
+//        }
+//    }
 
 //    numerator = sqrt(numerator);
-    const auto fpu_reduction = (is_root ? cfg_fpu_root_reduction : cfg_fpu_reduction)
-            * total_visited_policy * total_visited_policy;
+//    const auto fpu_reduction = (is_root ? cfg_fpu_root_reduction : cfg_fpu_reduction)
+//            * total_visited_policy * total_visited_policy;
     // Estimated eval for unknown nodes = original parent NN eval - reduction
-    const auto fpu_eval = get_net_eval(color) - fpu_reduction;
+//    const auto fpu_eval = get_net_eval(color) - fpu_reduction;
 
     auto best = static_cast<UCTNodePointer*>(nullptr);
     auto best_value = std::numeric_limits<double>::lowest();
@@ -345,15 +345,15 @@ UCTNode* UCTNode::uct_select_child(int color, bool is_root) {
             continue;
         }
 
-        auto winrate = fpu_eval;
+        auto winrate = 0;
         auto denom = 1.0; //1.0;//(1.0 - get_policy() + child.get_policy_sum());
         if (child.is_inflated() && child->m_expand_state.load() == ExpandState::EXPANDING) {
             // Someone else is expanding this node, never select it
             // if we can avoid so, because we'd block on it.
-            winrate = -1.0f - fpu_reduction;
+            winrate = -1.0f;
         } else if (child.get_visits() > 0) {
             winrate = child.get_eval(color);
-            denom += child.get_policy_sum();
+            denom += child.get_policy_sum() - 1.0;
 //        } else {
 
 //            denom += 1.0 - child.get_policy();
