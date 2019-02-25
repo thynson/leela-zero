@@ -244,7 +244,7 @@ float binary_search_visits(std::function<float(float)> f, float v_init) {
     while (true) {
         auto mid = (low + high) / 2.0;
         auto fmid = f(mid);
-        if (abs(fmid) < 0.0001) { return mid; }
+        if (abs(fmid) < 0.01) { return mid; } // 0.0001
         if (fmid < 0.0) { low = mid; }
         else { high = mid; }
     }
@@ -393,6 +393,7 @@ std::pair<UCTNode*, float> UCTNode::uct_select_child(int color, bool is_root) {
             q_of_best = actual_winrate;
             policy_of_best = psa;
             visits_of_best = visits;
+            if (visits == 0.0) break;
         }
     }
 

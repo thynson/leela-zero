@@ -36,6 +36,7 @@ template <typename net_t>
 void OpenCLScheduler<net_t>::clear_stats() {
     for (auto& opencl : m_opencl) {
         opencl->idle_count = 0;
+        opencl->failures = 0;
         for (auto j = 0; j < opencl->m_batch_size; j++)
             opencl->batch_stats[j] = 0;
         for (auto j = 0; j < opencl->m_num_workers; j++)
@@ -51,7 +52,7 @@ void OpenCLScheduler<net_t>::dump_stats() {
         myprintf("batch stats: ");
         for (auto j = 0; j < opencl->m_batch_size; j++)
             myprintf("%d, ", opencl->batch_stats[j].load());
-        myprintf("\nidle count: %d\nrounds: ", opencl->idle_count.load());
+        myprintf("\nidle count: %d\nfailures: %d\nrounds: ", opencl->idle_count.load(), opencl->failures.load());
         for (auto j = 0; j < opencl->m_num_workers; j++)
             myprintf("%d, ", opencl->rounds[j].load());
         myprintf("\n");
@@ -147,42 +148,9 @@ void OpenCLScheduler<net_t>::initialize(const int channels) {
     else while (cfg_batch_size.size() < num_gpus)
         cfg_batch_size.push_back(cfg_batch_size.back());
 
-    int num_workers = 0;
-    auto gnum = 0;
-    for (auto & opencl : m_opencl)
-        num_workers += cfg_workers[gnum++];
-    len = num_workers + 2;
-    auto count = 0;
-    while (len) len >>= 1, count++;
-    len = 1 << count;
-    unfull_workers.resize(len);
-    len--;
-
-    auto cfg_workers_cpy = cfg_workers;
-    count = 0;
-    // set up initial empty workers queue to be evenly distributed among all GPUs
-    while (count < num_workers) {
-        auto gnum = 0;
-        for (auto& opencl : m_opencl) {
-            auto& num = cfg_workers_cpy[gnum];
-            if (num)
-                unfull_workers[count++] = {gnum,--num};
-            gnum++;
-        }
-    }
-    workers_writing = workers_written = num_workers;
-
-#ifdef SCHEDULE_DEBUG
-    for (auto i = unfull_workers_head.load(); i < workers_written + 1; i++) {
-        int gpu, idx;
-        std::tie(gpu, idx) = unfull_workers[i];
-        myprintf("%d,%d\n", gpu, idx);
-    }
-#endif
-
     constexpr auto in_size = Network::INPUT_CHANNELS * BOARD_SIZE * BOARD_SIZE;
 
-    gnum = 0;
+    int gnum = 0;
     for (auto & opencl : m_opencl) {
         auto batchsize = cfg_batch_size[gnum];
         auto num_workers = cfg_workers[gnum];
@@ -205,16 +173,10 @@ void OpenCLScheduler<net_t>::initialize(const int channels) {
 template <typename net_t>
 OpenCLScheduler<net_t>::~OpenCLScheduler() {
     m_running = false;
-    for (auto & opencl : m_opencl) {
-        std::unique_lock<std::mutex> lk(opencl->mutex);
-        for (auto i = 0; i < opencl->m_num_workers; i++) {
-            opencl->cv[i].notify_one();
-        }
+    {
+        std::unique_lock<std::mutex> lk(m_search->m_mutex);
+        m_search->m_cv.notify_all();
     }
-    /*{
-        std::unique_lock<std::mutex> lk(m_mutex);
-        m_cv.notify_all();
-    }*/
     for (auto & x : m_worker_threads) {
         x.join();
     }
@@ -357,118 +319,22 @@ void OpenCLScheduler<net_t>::forward(const std::vector<float>& input,
 }
 
 template <typename net_t>
-void OpenCLScheduler<net_t>::forward0(const std::vector<float>& input,
-                                      const int tomove,
-                                      const int symmetry,
-                                      Netresult_ptr result) {
-
+void OpenCLScheduler<net_t>::forward0(int gnum, int i,
+              const std::vector<float>& input,
+              const int tomove,
+              const int symmetry,
+              Netresult_ptr result) {
     constexpr auto in_size = Network::INPUT_CHANNELS * BOARD_SIZE * BOARD_SIZE;
+
+    auto& opencl = m_opencl[gnum];
+    auto& written_loc = opencl->written_location[i];
+    auto loc = written_loc.load();
+    std::transform(input.begin(), input.end(),
+        opencl->inputs[i] + in_size * loc,
+        [](float x) {return (net_t)x; });
+    opencl->backup_entries[i][loc] = { tomove, symmetry, result };
+    written_loc++;
     m_search->m_positions++;
-
-    // first check the "empty" workers, i.e. those that haven't received any position to evaluate
-    while (m_running) {
-        auto head = empty_workers_head.load();
-        if (head == workers_written) {
-            head = unfull_workers_head.load();
-
-            // all workers are full, wait
-            if (head == workers_written) {
-                std::unique_lock<std::mutex> lk(m_mutex, std::try_to_lock);
-                if (lk.owns_lock())
-                    m_cv.wait_for(lk, 1ms, [this] { return !m_running
-                        || unfull_workers_head != workers_written; });
-                continue;
-            }
-
-            // unfull workers exist
-            // try writing NN request to an unfull worker
-            int gpu, i;
-            std::tie(gpu, i) = unfull_workers[head & len];
-            auto& opencl = m_opencl[gpu];
-            auto& writing_loc = opencl->writing_location[i];
-            auto& written_loc = opencl->written_location[i];
-            auto batch_size = opencl->m_batch_size;
-
-            auto loc = writing_loc.load();
-            /*if (loc < 0) {
-                // worker has sent to GPU or is full, can't write
-                if (!opencl->buffer_flag[i].test_and_set()) {
-                    if (writing_loc < 0) {
-                        unfull_workers_head++;
-                        continue;
-                    }
-                    else opencl->buffer_flag[i].clear();
-                }
-            }*/
-            // why will threads leave if loc < 0 ? must try to remove ..
-            // must first acquire by adding 1, then remove ..
-            if (loc >= batch_size) continue;
-            loc = writing_loc.fetch_add(1);
-            if (loc < 0) {
-                if (!opencl->buffer_flag[i].test_and_set()) unfull_workers_head++;
-                writing_loc--;
-                continue;
-            }
-            if (loc >= batch_size) {
-                writing_loc--;
-                continue;
-            }
-
-            if (loc + 1 == batch_size && !opencl->buffer_flag[i].test_and_set())
-                unfull_workers_head++;
-
-            std::transform(input.begin(), input.end(),
-                opencl->inputs[i] + in_size * loc,
-                [](float x) {return (net_t)x; });
-            opencl->backup_entries[i][loc] = { tomove, symmetry, result };
-            auto loc_ = loc;
-            auto success = true;
-            std::unique_lock<std::mutex> lk(opencl->mutex, std::defer_lock);
-            if (loc + 1 == batch_size || loc == 0)
-                lk.lock();
-            while (!written_loc.compare_exchange_weak(loc_, loc + 1)) {
-                if (loc_ == -1 || writing_loc <= 0) {
-                    // worker already picked up requests before becoming full, abort writing
-                    if (loc_ == -1 && !opencl->buffer_flag[i].test_and_set())
-                        unfull_workers_head++;
-                    writing_loc--;
-                    success = false;
-                    write_aborts++;
-                    //std::cout << write_aborts << std::endl; ////
-                    break;
-                }
-                loc_ = loc;
-            }
-            if (!success) continue;
-            if (loc + 1 == batch_size || loc == 0) {
-                lk.unlock(); ////
-                // std::lock_guard<std::mutex> lk(opencl->mutex[i]); ////
-                opencl->cv[i].notify_one();
-            }
-            return;
-        }
-
-        // empty workers exist
-        if (!empty_workers_head.compare_exchange_strong(head, head + 1)) continue;
-        // writing NN request to an empty worker
-        int gpu, i;
-        std::tie(gpu, i) = unfull_workers[head & len];
-        auto& opencl = m_opencl[gpu];
-        int expected = -cfg_num_threads - 2;
-        while (!opencl->writing_location[i].compare_exchange_weak(expected, 1))
-            expected = -cfg_num_threads - 2;
-        std::transform(input.begin(), input.end(), opencl->inputs[i], [](float x) {return (net_t)x; });
-        opencl->backup_entries[i][0] = { tomove, symmetry, result };
-        {
-            std::lock_guard<std::mutex> lk(opencl->mutex);
-            opencl->written_location[i] = 1;
-        }
-        if (!opencl->m_occupied || opencl->m_batch_size == 1) {
-            // std::lock_guard<std::mutex> lk(opencl->mutex[i]); ////
-            opencl->cv[i].notify_one();
-        }
-        return;
-    }
 }
 
 template <typename net_t>
@@ -482,7 +348,7 @@ void OpenCLScheduler<net_t>::batch_worker(const size_t gnum, const size_t i) {
 
     auto& opencl = m_opencl[gnum];
     auto batch_size = opencl->m_batch_size;
-    auto& writing_loc = opencl->writing_location[i];
+    //auto& writing_loc = opencl->writing_location[i];
     auto& written_loc = opencl->written_location[i];
     auto& inputs = opencl->inputs[i];
     auto& entries = opencl->backup_entries[i];
@@ -490,60 +356,37 @@ void OpenCLScheduler<net_t>::batch_worker(const size_t gnum, const size_t i) {
     auto batch_output_pol = std::vector<float>(out_pol_size * batch_size);
     auto batch_output_val = std::vector<float>(out_val_size * batch_size);
 
-    while (true) {
-        if (!m_running) return;
+    auto failures = 0;
+    auto count = written_loc.load();
 
-        std::unique_lock<std::mutex> lk(opencl->mutex);
-        auto loc = written_loc.load();
-        if (loc == batch_size || (loc > 0 && !opencl->m_occupied)) {
-            lk.unlock();
+    while (m_running) {
+        if (count == batch_size || (count > 0 && failures > 10 && !opencl->m_occupied)) {
             opencl->m_occupied++;
-            opencl->rounds[i]++;
-            writing_loc -= batch_size + cfg_num_threads + 2;
-            auto count = written_loc.exchange(-1);
-
             batch_output_pol.resize(out_pol_size * count);
             batch_output_val.resize(out_val_size * count);
-
             m_networks[gnum]->forward(inputs, batch_output_pol, batch_output_val, context, *this, count);
-
             for (auto index = 0; index < count; ) {
                 std::vector<float> out_p(begin(batch_output_pol) + out_pol_size * index,
                     begin(batch_output_pol) + out_pol_size * (index + 1));
                 std::vector<float> out_v(begin(batch_output_val) + out_val_size * index,
                     begin(batch_output_val) + out_val_size * (index + 1));
-                m_network->process_output(out_p, out_v, entries[index].tomove, 
+                m_network->process_output(out_p, out_v, entries[index].tomove,
                     entries[index].symmetry, entries[index].result);
                 index++;
             }
+            opencl->rounds[i]++;
             opencl->batch_stats[count - 1]++;
-            writing_loc += batch_size - count;
-
-            if (opencl->buffer_flag[i].test_and_set()) {
-                // this worker has been removed from the buffer by a search thread or will be soon
-                // insert at the end of cyclic buffer to signal that this worker is empty
-                auto tail = workers_writing.fetch_add(1);
-                auto tail_ = tail;
-                unfull_workers[tail & len] = { gnum, i };
-                written_loc = -2;
-                while (!workers_written.compare_exchange_weak(tail, tail + 1)) tail = tail_;
-                opencl->buffer_flag[i].clear();
-                m_cv.notify_all();
-            }
+            written_loc = 0;
+            count = 0;
+            failures = 0;
+        } else {
+            if (m_search) { m_search->search(gnum, i); }
+            auto new_count = written_loc.load();
+            if (new_count > count) failures = 0;
             else {
-                // worker won't be removed, will be kept in place in buffer
-                // reset writing_loc and written_loc
-                int expected = -cfg_num_threads - 2;
-                while (writing_loc.compare_exchange_weak(expected, 0)) expected = -cfg_num_threads - 2;
-                written_loc = 0;
-                opencl->buffer_flag[i].clear();
+                failures++; opencl->failures++;
             }
-        }
-        else {
-            opencl->cv[i].wait_for(lk, 1s, [this, &written_loc, batch_size, &opencl] {
-                auto loc = written_loc.load();
-                return !m_running || loc == batch_size || (loc > 0 && !opencl->m_occupied);
-            });
+            count = new_count;
         }
     }
 

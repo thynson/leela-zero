@@ -57,7 +57,7 @@ class UCTWorker {
 public:
     UCTWorker(UCTSearch * search, int thread_num)
         : m_search(search), m_thread_num(thread_num) {}
-    void operator()();
+    //void operator()();
 private:
     UCTSearch * m_search;
     int m_thread_num;
@@ -97,6 +97,7 @@ public:
 
     UCTSearch(GameState& g, Network & network);
     ~UCTSearch();
+    void search(int gnum, int i);
     int think(int color, passflag_t passflag = NORMAL);
     void set_playout_limit(int playouts);
     void set_visit_limit(int visits);
@@ -104,7 +105,7 @@ public:
     bool is_running() const;
     void increment_playouts();
     void play_simulation(std::unique_ptr<GameState> currstate, UCTNode* node, 
-        std::atomic<int>* pending_count, int thread_num);
+        std::atomic<int>* pending_count, int gnum, int i);
     std::atomic<int> m_positions{0};
     std::atomic<bool> m_run{false};
     std::mutex m_mutex;

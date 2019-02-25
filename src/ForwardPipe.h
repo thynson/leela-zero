@@ -53,8 +53,9 @@ public:
     virtual bool needs_autodetect() { return false; };
     virtual void forward(const std::vector<float>& input,
                          std::vector<float>& output_pol,
-                         std::vector<float>& output_val) = 0;    
-    virtual void forward0(const std::vector<float>& input,
+                         std::vector<float>& output_val) = 0;
+    virtual void forward0(int gnum, int i,
+                          const std::vector<float>& input,
                           const int tomove,
                           const int symmetry,
                           Netresult_ptr result) = 0;
@@ -64,7 +65,7 @@ public:
                               std::shared_ptr<const ForwardPipeWeights> weights) = 0;
     virtual void clear_stats() = 0;
     virtual void dump_stats() = 0;
-    UCTSearch* m_search;
+    UCTSearch* m_search{nullptr};
     Network* m_network;
     std::mutex m_mutex;
     std::condition_variable m_cv0;

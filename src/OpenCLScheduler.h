@@ -70,7 +70,8 @@ public:
     virtual void forward(const std::vector<float>& input,
                          std::vector<float>& output_pol,
                          std::vector<float>& output_val);
-    virtual void forward0(const std::vector<float>& input,
+    virtual void forward0(int gnum, int i,
+                          const std::vector<float>& input,
                           const int tomove,
                           const int symmetry,
                           Netresult_ptr result);
@@ -98,13 +99,6 @@ private:
     std::list<std::unique_ptr<ForwardQueueEntry0>> m_forward_queue0;
 
     std::list<std::thread> m_worker_threads;
-
-    unsigned len;
-    std::vector<std::pair<int, int>> unfull_workers; // cyclic buffer, {gpu num, worker thread num}
-    std::atomic<unsigned> empty_workers_head{0};
-    std::atomic<unsigned> unfull_workers_head{0};
-    std::atomic<unsigned> workers_writing;
-    std::atomic<unsigned> workers_written;
 
     std::atomic<int> write_aborts{0};
 

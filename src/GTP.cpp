@@ -371,7 +371,7 @@ void GTP::execute(GameState & game, const std::string& xinput) {
         Training::clear_training();
         game.reset_game();
         //s_network->nncache_clear();
-        search = std::make_unique<UCTSearch>(game, *s_network);
+        //search = std::make_unique<UCTSearch>(game, *s_network);
         assert(UCTNodePointer::get_tree_size() == 0);
         gtp_printf(id, "");
         return;

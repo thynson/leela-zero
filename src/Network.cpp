@@ -726,6 +726,7 @@ std::pair<Netresult_ptr, int> Network::probe_cache0(const GameState* const state
 */
 
 void Network::get_output0(
+    int gnum, int i,
     BackupData& bd,
     const Ensemble ensemble,
     int symmetry, const bool skip_cache) {
@@ -817,7 +818,7 @@ void Network::get_output0(
         }
 #endif
     }
-    m_forward->forward0(gather_features(state, symmetry), state->get_to_move(), symmetry, result);
+    m_forward->forward0(gnum, i, gather_features(state, symmetry), state->get_to_move(), symmetry, result);
 }
 
 Network::Netresult Network::get_output(

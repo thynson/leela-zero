@@ -89,18 +89,14 @@ UCTSearch::UCTSearch(GameState& g, Network& network)
     m_network.set_search(this);
 
     // it's not necessary to put search threads inside a pool; they're always running
-    for (int i = 1; i <= cfg_num_threads; i++) {
+    /*for (int i = 1; i <= cfg_num_threads; i++) {
         m_search_threads.add_task(UCTWorker(this, i));
-    }
+    }*/
 }
 
 UCTSearch::~UCTSearch() {
     m_terminate = true;
-    {
-        std::lock_guard<std::mutex> lk(m_mutex);
-        m_cv.notify_all();
-    }
-    m_search_threads.wait_all();
+    m_network.destruct();
     m_delete_futures.wait_all();
 }
 
@@ -281,7 +277,7 @@ void UCTSearch::update_root() {
     lk.unlock();
 
     while (!m_root_prepared) {
-        //if (m_network.get_max_size() > 0) {
+        /*//if (m_network.get_max_size() > 0) {
             acquire_reader();
             auto rootstate = std::make_unique<GameState>(m_rootstate);
             auto root = m_root.get();
@@ -289,7 +285,7 @@ void UCTSearch::update_root() {
             ++(*pending_count);
             release_reader();
             play_simulation(std::move(rootstate), root, pending_count, 0);
-        //}
+        //}*/
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
 }
@@ -366,7 +362,7 @@ float eval_from_score(float board_score) {
 void UCTSearch::play_simulation(std::unique_ptr<GameState> currstate,
                                         UCTNode* node,
                                         std::atomic<int>* pending_count,
-                                        int thread_num) {
+                                        int gnum, int i) {
     auto factor = 1.0f;
     BackupData bd;
     bd.pending_count = pending_count;
@@ -394,7 +390,7 @@ void UCTSearch::play_simulation(std::unique_ptr<GameState> currstate,
             if (!is_root) { max_pending_w_mult = std::max(pending_w_mult.load(), max_pending_w_mult.load()); }
 #endif
             bd.state = std::move(currstate);
-            m_network.get_output0(bd, Network::Ensemble::RANDOM_SYMMETRY);
+            m_network.get_output0(gnum, i, bd, Network::Ensemble::RANDOM_SYMMETRY);
             return;
 
         case UCTNode::FAIL: // virtual loss accumulated, return
@@ -889,29 +885,28 @@ bool UCTSearch::stop_thinking(int elapsed_centis, int time_for_move) const {
            || elapsed_centis >= time_for_move;
 }
 
-void UCTWorker::operator()() {
-    while (!m_search->m_terminate) {
-        if (m_search->is_running()) { // && m_search->m_network.get_max_size() > 0) {
-            m_search->acquire_reader();
-            if (//m_search->m_must_run || 
-                !m_search->stop_thinking(0, 1)) {
-                auto rootstate = std::make_unique<GameState>(m_search->m_rootstate);
-                auto root = m_search->m_root.get();
-                auto pending_count = m_search->m_pending_count;
-                ++(*pending_count);
-                m_search->release_reader();
-                m_search->play_simulation(std::move(rootstate), root, pending_count, m_thread_num);
-                continue;
-            }
-            m_search->release_reader();
+//void UCTWorker::operator()() {
+void UCTSearch::search(int gnum, int i) {
+    if (is_running()) { // && m_search->m_network.get_max_size() > 0) {
+        acquire_reader();
+        if (//m_must_run || 
+            !stop_thinking(0, 1)) {
+            auto rootstate = std::make_unique<GameState>(m_rootstate);
+            auto root = m_root.get();
+            auto pending_count = m_pending_count;
+            ++(*pending_count);
+            release_reader();
+            play_simulation(std::move(rootstate), root, pending_count, gnum, i);
+            return;
         }
-        std::unique_lock<std::mutex> lk(m_search->m_mutex);
-        m_search->m_cv.wait(lk, [&]() { return m_search->m_terminate ||
-            (m_search->is_running() 
-            // && m_search->m_network.get_max_size() > 0
-            && (//m_search->m_must_run || 
-                !m_search->stop_thinking(0,1))); });
+        release_reader();
     }
+    std::unique_lock<std::mutex> lk(m_mutex);
+    if (m_terminate) return;
+    m_cv.wait(lk, [&]() { return m_terminate || (is_running()
+        // && m_search->m_network.get_max_size() > 0
+        && (//m_search->m_must_run || 
+            !stop_thinking(0, 1))); });
 }
 
 void UCTSearch::increment_playouts() {
@@ -1025,7 +1020,7 @@ void UCTSearch::ponder() {
     auto keeprunning = true;
     auto last_output = 0;
     do {
-        if (is_running()) { // && m_network.get_max_size() > 0) {
+        /*if (is_running()) { // && m_network.get_max_size() > 0) {
             acquire_reader();
             auto rootstate = std::make_unique<GameState>(m_rootstate);
             auto root = m_root.get();
@@ -1033,8 +1028,8 @@ void UCTSearch::ponder() {
             ++(*pending_count);
             release_reader();
             play_simulation(std::move(rootstate), root, pending_count, 0);
-        }
-
+        }*/
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
         if (cfg_analyze_interval_centis) {
             Time elapsed;
             int elapsed_centis = Time::timediff_centis(start, elapsed);

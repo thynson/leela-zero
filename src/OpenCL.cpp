@@ -301,14 +301,15 @@ void OpenCL_Network<net_t>::forward(const net_t* input,
         CL_MAP_READ, 0, batch_size * finalSize_val);
 
     //std::unique_lock<std::mutex> enqueue_lock(m_enqueue_mutex);
-    enqueue_lock.unlock();
+    //enqueue_lock.unlock();
     //std::unique_lock<std::mutex> finish_lock(m_queue_finish_mutex);
-    enqueue_lock.lock();
+    //enqueue_lock.lock();
+    //std::unique_lock<std::mutex> enqueue_lock(m_enqueue_mutex);
     queue.finish();
     //finish_lock.unlock();
-    enqueue_lock.unlock();
+    //enqueue_lock.unlock();
     
-    {
+    /*{
         std::lock_guard<std::mutex> lk(m_opencl.mutex);
         if (--m_opencl.m_occupied == 0) {
             m_opencl.idle_count++;
@@ -322,7 +323,7 @@ void OpenCL_Network<net_t>::forward(const net_t* input,
             }
             if (max_cnt > 0) m_opencl.cv[max_idx].notify_one();
         }
-    }
+    }*/
     /*for (auto i = scheduler.unfull_workers_head.load(); i < scheduler.workers_written && !m_opencl.m_occupied; i++) {
         int gpu, idx;
         std::tie(gpu, idx) = scheduler.unfull_workers[scheduler.len & i];
@@ -343,7 +344,11 @@ void OpenCL_Network<net_t>::forward(const net_t* input,
             pinnedOutBufferHost_pol);
     queue.enqueueUnmapMemObject(opencl_context.m_pinnedOutBuffer_val,
             pinnedOutBufferHost_val);
+    enqueue_lock.unlock();
 
+    if (--m_opencl.m_occupied == 0) {
+        m_opencl.idle_count++;
+    }
 }
 
 template <typename net_t>
@@ -943,16 +948,16 @@ void OpenCL<net_t>::initialize(const int channels, int num_workers, int batch_si
         inputs.push_back(new net_t[in_size * batch_size]);
         backup_entries.push_back(new BackupEntry[batch_size]);
     }
-    writing_location = new std::atomic<int>[num_workers];
+    //writing_location = new std::atomic<int>[num_workers];
     written_location = new std::atomic<int>[num_workers];
-    std::fill_n(writing_location, num_workers, -cfg_num_threads - 2);
-    std::fill_n(written_location, num_workers, -2);
-    buffer_flag = new std::atomic_flag[num_workers];
-    for (auto i = 0; i < num_workers; i++)
-        buffer_flag[i].clear();
+    //std::fill_n(writing_location, num_workers, -cfg_num_threads - 2);
+    std::fill_n(written_location, num_workers, 0);
+    //buffer_flag = new std::atomic_flag[num_workers];
+    //for (auto i = 0; i < num_workers; i++)
+    //    buffer_flag[i].clear();
     //std::fill_n(buffer_flag, num_workers, ATOMIC_FLAG_INIT);
     //mutex = new std::mutex[num_workers];
-    cv = new std::condition_variable[num_workers];
+    //cv = new std::condition_variable[num_workers];
 }
 
 template <typename net_t>

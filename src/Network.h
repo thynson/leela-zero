@@ -69,7 +69,9 @@ public:
         const int symmetry = -1,
         const bool skip_cache = false,
         const bool force_selfcheck = false);
-    void get_output0(BackupData& bd,
+    void get_output0(
+        int gnum, int i,
+        BackupData& bd,
         const Ensemble ensemble,
         int symmetry = -1,
         const bool skip_cache = false);
@@ -104,6 +106,7 @@ public:
 
     //int get_max_size() { return m_forward->m_max_queue_size.load(); }
     void set_search(UCTSearch* search) { m_search = m_forward->m_search = search; m_forward->m_network = this; }
+    void destruct() { m_forward = nullptr; }
     std::mutex& get_queue_mutex() { return m_forward->m_mutex; }
     void notify() { m_forward->m_cv0.notify_all(); }
     void process_output(std::vector<float>& policy_data,
