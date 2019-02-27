@@ -215,8 +215,7 @@ void UCTSearch::update_root() {
             auto root = to_delete.front();
             to_delete.pop_front();
             ThreadGroup tg0(thread_pool);
-            while (*pending_counter > 0
-                || root->m_virtual_loss) {
+            while (*pending_counter > 0) {
                 myprintf("pending count: %d\n", pending_counter->load());
                 myprintf("root vl: %d\n", root->m_virtual_loss.load());
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -271,15 +270,6 @@ void UCTSearch::update_root() {
     lk.unlock();
 
     while (!m_root_prepared) {
-        /*//if (m_network.get_max_size() > 0) {
-            acquire_reader();
-            auto rootstate = std::make_unique<GameState>(m_rootstate);
-            auto root = m_root.get();
-            auto pending_counter = m_pending_counter;
-            ++(*pending_counter);
-            release_reader();
-            play_simulation(std::move(rootstate), root, pending_counter, 0);
-        //}*/
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
 }
