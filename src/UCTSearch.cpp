@@ -90,7 +90,6 @@ UCTSearch::UCTSearch(GameState& g, Network& network)
 }
 
 UCTSearch::~UCTSearch() {
-    m_terminate = true;
     m_network.destruct();
     m_delete_futures.wait_all();
 }
@@ -261,13 +260,14 @@ void UCTSearch::update_root() {
 #endif
     // This is protected.
     m_pending_counter = new std::atomic<int>(0);
-    m_root_prepared = false;
     release_writer();
 
-    m_run = true;
-    std::unique_lock<std::mutex> lk(m_mutex);
+    {
+        std::unique_lock<std::mutex> lk(m_mutex);
+        m_run = true;
+        m_root_prepared = false;
+    }
     m_cv.notify_all();
-    lk.unlock();
 
     while (!m_root_prepared) {
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
@@ -870,23 +870,19 @@ bool UCTSearch::stop_thinking(int elapsed_centis, int time_for_move) const {
 }
 
 void UCTSearch::search(int gnum, int i) {
-    if (m_run) {
+    if (is_running() || !m_root_prepared) {
         acquire_reader();
-        if (!stop_thinking(0, 1)) {
-            auto rootstate = std::make_unique<GameState>(m_rootstate);
-            auto root = m_root.get();
-            auto pending_counter = m_pending_counter;
-            ++(*pending_counter);
-            release_reader();
-            play_simulation(std::move(rootstate), root, pending_counter, gnum, i);
-            return;
-        }
+        auto rootstate = std::make_unique<GameState>(m_rootstate);
+        auto root = m_root.get();
+        auto pending_counter = m_pending_counter;
+        ++(*pending_counter);
         release_reader();
+        play_simulation(std::move(rootstate), root, pending_counter, gnum, i);
+        return;
     }
     std::unique_lock<std::mutex> lk(m_mutex);
-    if (m_terminate) return;
-    m_cv.wait(lk, [&]() { return m_terminate || 
-        (m_run && !stop_thinking(0, 1)); });
+    if (m_root_prepared) m_run = false;
+    if (!m_run) m_cv.wait(lk, [this]() { return m_run.load(); });
 }
 
 void UCTSearch::increment_playouts() {
@@ -939,8 +935,8 @@ int UCTSearch::think(int color, passflag_t passflag) {
         keeprunning &= have_alternate_moves(elapsed_centis, time_for_move);
     } while (keeprunning);
 
-    // stop the search
-    // m_run = false; // set in GTP.cpp, depending on --noponder or not
+    m_run = is_running() && !stop_thinking(0, 1);
+    // if --noponder, set m_run = false in GTP.cpp
 
     m_root->acquire_reader();
     // reactivate all pruned root children

@@ -172,11 +172,14 @@ void OpenCLScheduler<net_t>::initialize(const int channels) {
 
 template <typename net_t>
 OpenCLScheduler<net_t>::~OpenCLScheduler() {
-    m_running = false;
     {
-        std::unique_lock<std::mutex> lk(m_search->m_mutex);
-        m_search->m_cv.notify_all();
+        std::lock_guard<std::mutex> lk(m_search->m_mutex);
+        m_running = false;
+        m_search->m_run = true;
     }
+    
+    m_search->m_cv.notify_all();
+
     for (auto & x : m_worker_threads) {
         x.join();
     }

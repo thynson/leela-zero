@@ -80,6 +80,7 @@ std::shared_ptr<NNCache::Entry> NNCache::lookup_and_insert(std::uint64_t hash,
 }
 
 void NNCache::resize(int size) {
+    std::lock_guard<std::mutex> lk(m_mutex);
     m_size = size;
     while (m_order.size() > m_size) {
         m_cache.erase(m_order.front());
