@@ -45,9 +45,11 @@ class OpenCLScheduler : public ForwardPipe {
     friend class OpenCL_Network<net_t>;
     class ContextPoolEntry {
     public:
-        size_t net_index;
-        OpenCLContext context;
-        ContextPoolEntry(size_t index) : net_index(index) {}
+        std::mutex mutex;
+        std::condition_variable cv;
+        const std::vector<float>& in;
+        std::vector<float>& out_p;
+        std::vector<float>& out_v;
     };
     class ForwardQueueEntry {
     public:
