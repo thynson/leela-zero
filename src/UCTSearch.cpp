@@ -30,6 +30,7 @@
 #include "config.h"
 #include "UCTSearch.h"
 
+#include <boost/format.hpp>
 #include <cassert>
 #include <cmath>
 #include <cstddef>
@@ -612,6 +613,10 @@ bool UCTSearch::should_resign(passflag_t passflag, float besteval) {
         }
     }
 
+    if (!m_rootstate.is_move_legal(color, FastBoard::RESIGN)) {
+        return false;
+    }
+
     return true;
 }
 
@@ -713,8 +718,10 @@ int UCTSearch::get_best_move(passflag_t passflag) {
             // We didn't consider passing. Should we have and
             // end the game immediately?
 
+            if (!m_rootstate.is_move_legal(color, FastBoard::PASS)) {
+                myprintf("Passing is forbidden, I'll play on.\n");
             // do we lose by passing?
-            if (relative_score < 0.0f) {
+            } else if (relative_score < 0.0f) {
                 myprintf("Passing loses, I'll play on.\n");
             } else if (relative_score > 0.0f) {
                 myprintf("Passing wins, I'll pass out.\n");
@@ -770,18 +777,16 @@ std::string UCTSearch::get_pv(FastState & state, UCTNode& parent) {
     return res;
 }
 
-void UCTSearch::dump_analysis(int playouts) {
-    if (cfg_quiet) {
-        return;
-    }
+std::string UCTSearch::get_analysis() {
+    auto playouts = m_playouts.load();
 
     FastState tempstate = m_rootstate;
     int color = tempstate.board.get_to_move();
 
-    std::string pvstring = get_pv(tempstate, *m_root);
+    auto pvstring = get_pv(tempstate, *m_root);
     float winrate = 100.0f * m_root->get_raw_eval(color);
-    myprintf("Playouts: %d, Positions: %d, Visits: %d, Win: %5.2f%%, PV: %s\n",
-             playouts, m_positions.load(), int(m_root->get_visits()), winrate, pvstring.c_str());
+    return str(boost::format("Playouts: %d, Visits: %d, Positions: %d, Win: %5.2f%%, PV: %s")
+        % playouts % (int)m_root->get_visits() % m_positions.load() % winrate % pvstring.c_str());
 }
 
 bool UCTSearch::is_running() const {
@@ -924,22 +929,22 @@ int UCTSearch::think(int color, passflag_t passflag) {
         Time elapsed;
         int elapsed_centis = Time::timediff_centis(start, elapsed);
         std::this_thread::sleep_for(std::chrono::milliseconds(
-            std::min(std::min(cfg_analyze_interval_centis - (elapsed_centis - last_output),
+            std::min(std::min(cfg_analyze_tags.interval_centis() - (elapsed_centis - last_output),
                 250 - (elapsed_centis - last_update)), time_for_move - elapsed_centis) * 10));
         Time elapsed0;
         elapsed_centis = Time::timediff_centis(start, elapsed0);
 
-        if (cfg_analyze_interval_centis &&
-            elapsed_centis - last_output > cfg_analyze_interval_centis) {
+        if (cfg_analyze_tags.interval_centis() &&
+            elapsed_centis - last_output > cfg_analyze_tags.interval_centis()) {
             last_output = elapsed_centis;
             output_analysis(m_rootstate, *m_root);
         }
 
         // output some stats every few seconds
         // check if we should still search
-        if (elapsed_centis - last_update > 250) {
+        if (!cfg_quiet && elapsed_centis - last_update > 250) {
             last_update = elapsed_centis;
-            dump_analysis(m_playouts.load());
+            myprintf("%s\n", get_analysis().c_str());
         }
         keeprunning  = is_running();
         keeprunning &= !stop_thinking(elapsed_centis, time_for_move);
@@ -953,7 +958,7 @@ int UCTSearch::think(int color, passflag_t passflag) {
     // reactivate all pruned root children
 
     // Make sure to post at least once.
-    if (cfg_analyze_interval_centis && last_output == 0) {
+    if (cfg_analyze_tags.interval_centis() && last_output == 0) {
         output_analysis(m_rootstate, *m_root);
     }
 
@@ -1000,12 +1005,30 @@ int UCTSearch::think(int color, passflag_t passflag) {
     }
     int bestmove = get_best_move(passflag);
 
+    // Save the explanation.
+    m_think_output =
+        str(boost::format("move %d, %c => %s\n%s")
+        % m_rootstate.get_movenum()
+        % (color == FastBoard::BLACK ? 'B' : 'W')
+        % m_rootstate.move_to_text(bestmove).c_str()
+        % get_analysis().c_str());
+
     // Copy the root state. Use to check for tree re-use in future calls.
     m_last_rootstate = std::make_unique<GameState>(m_rootstate);
     return bestmove;
 }
 
+// Brief output from last think() call.
+std::string UCTSearch::explain_last_think() const {
+    return m_think_output;
+}
+
 void UCTSearch::ponder() {
+    auto disable_reuse = cfg_analyze_tags.has_move_restrictions();
+    if (disable_reuse) {
+        m_last_rootstate.reset(nullptr);
+    }
+
     update_root();
 
     Time start;
@@ -1013,10 +1036,10 @@ void UCTSearch::ponder() {
     auto last_output = 0;
     do {
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
-        if (cfg_analyze_interval_centis) {
+        if (cfg_analyze_tags.interval_centis()) {
             Time elapsed;
             int elapsed_centis = Time::timediff_centis(start, elapsed);
-            if (elapsed_centis - last_output > cfg_analyze_interval_centis) {
+            if (elapsed_centis - last_output > cfg_analyze_tags.interval_centis()) {
                 last_output = elapsed_centis;
                 output_analysis(m_rootstate, *m_root);
             }
@@ -1028,7 +1051,7 @@ void UCTSearch::ponder() {
     // stop the search
     m_run = keeprunning;
     // Make sure to post at least once.
-    if (cfg_analyze_interval_centis && last_output == 0) {
+    if (cfg_analyze_tags.interval_centis() && last_output == 0) {
         output_analysis(m_rootstate, *m_root);
     }
 
@@ -1051,7 +1074,9 @@ void UCTSearch::ponder() {
     myprintf("pending netresults: %u\n", pending_netresults.load());
 #endif
     // Copy the root state. Use to check for tree re-use in future calls.
-    m_last_rootstate = std::make_unique<GameState>(m_rootstate);
+    if (!disable_reuse) {
+        m_last_rootstate = std::make_unique<GameState>(m_rootstate);
+    }
 }
 
 void UCTSearch::set_playout_limit(int playouts) {

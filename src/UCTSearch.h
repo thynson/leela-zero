@@ -127,6 +127,8 @@ public:
     std::atomic<int> pending_netresults{0};
     std::atomic<int> max_pending_netresults;
     std::atomic<int> min_pending_netresults;
+    std::string explain_last_think() const;
+
 private:
     
     friend class UCTWorker;
@@ -165,7 +167,7 @@ private:
     void dump_stats(FastState& state, UCTNode& parent);
     void tree_stats(UCTNode& node);
     std::string get_pv(FastState& state, UCTNode& parent);
-    void dump_analysis(int playouts);
+    std::string get_analysis();
     bool should_resign(passflag_t passflag, float besteval);
     bool have_alternate_moves(int elapsed_centis, int time_for_move);
     int est_playouts_left(int elapsed_centis, int time_for_move) const;
@@ -176,6 +178,8 @@ private:
     void update_root();
     bool advance_to_new_rootstate(std::list<UCTNode*>& to_delete);
     void output_analysis(FastState & state, UCTNode & parent);
+
+    std::string m_think_output;
 
     Network & m_network;
 

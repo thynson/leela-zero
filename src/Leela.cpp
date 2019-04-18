@@ -137,13 +137,15 @@ static void parse_commandline(int argc, char *argv[]) {
         ("noponder", "Disable thinking on opponent's time.")
         ("benchmark", "Test network and exit. Default args:\n-v3200 --noponder "
                       "-m0 -t1 -s1.")
-        ("cpu-only", "Use CPU-only implementation and do not use GPU.")
+#ifndef USE_CPU_ONLY
+        ("cpu-only", "Use CPU-only implementation and do not use OpenCL device(s).")
+#endif
         ("disable-frac-backup", "Disable fractional backup feature.")
         ("no-vl-in-parentvisits", "No virtual loss in sum of children's visits.")
         ("uct-temp", po::value<float>(), "")
         ;
 #ifdef USE_OPENCL
-    po::options_description gpu_desc("GPU options");
+    po::options_description gpu_desc("OpenCL device options");
     gpu_desc.add_options()
         ("gpu",  po::value<std::vector<int>>(),
                 "ID of the OpenCL device(s) to use (disables autodetection).")
@@ -375,6 +377,12 @@ static void parse_commandline(int argc, char *argv[]) {
     if (vm.count("dumbpass")) {
         cfg_dumbpass = true;
     }
+
+#ifndef USE_CPU_ONLY
+    if (vm.count("cpu-only")) {
+        cfg_cpu_only = true;
+    }
+#endif
 
     if (vm.count("playouts")) {
         cfg_max_playouts = vm["playouts"].as<int>();
