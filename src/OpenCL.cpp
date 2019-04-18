@@ -70,7 +70,7 @@ const std::string sourceCode_common =
     #include "kernels/common.opencl"
 ;
 
-static const std::string sourceCode_tensorcore_test = 
+static const std::string sourceCode_tensorcore_test =
     #include "kernels/tensorcore_test.opencl"
 ;
 

@@ -18,8 +18,7 @@
 
 
 // This kernel simply tests if the host can compile a wmma insturction.
-// Not intended to be run
-
+// Not intended to be run at all.
 
 // Enables loading of this file using the C++ pre-processor's #include (C++11 standard raw string
 // literal). Comment-out this line for syntax-highlighting when developing.
