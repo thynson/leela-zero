@@ -65,7 +65,7 @@ static void calculate_thread_count_cpu(boost::program_options::variables_map & v
     // If we are CPU-based, there is no point using more than the number of CPUs/
     auto cfg_max_threads = std::min(SMP::get_num_cpus(), size_t{MAX_CPUS});
 
-    if (vm.count("threads")) {
+    if (vm["threads"].as<unsigned int>() > 0) {
         auto num_threads = vm["threads"].as<unsigned int>();
         if (num_threads > cfg_max_threads) {
             myprintf("Clamping threads to maximum = %d\n", cfg_max_threads);
@@ -90,14 +90,14 @@ static void calculate_thread_count_gpu(boost::program_options::variables_map & v
         // size of zero if autodetect GPU : default to 1
         gpu_count = 1;
     }
-    if (vm.count("threads")) {
+    if (vm["threads"].as<unsigned int>() > 0) {
         auto num_threads = vm["threads"].as<unsigned int>();
         if (num_threads > cfg_max_threads) {
             myprintf("Clamping threads to maximum = %d\n", cfg_max_threads);
             num_threads = cfg_max_threads;
         }
         cfg_num_threads = num_threads;
-        if (vm.count("batchsize")) {
+        if (vm["batchsize"].as<unsigned int>() > 0) {
             cfg_batch_size = vm["batchsize"].as<unsigned int>();
         } else {
             cfg_batch_size = (cfg_num_threads + (gpu_count * 2) - 1) / (gpu_count * 2);
@@ -109,7 +109,7 @@ static void calculate_thread_count_gpu(boost::program_options::variables_map & v
             }
         }
     } else {
-        if (vm.count("batchsize")) {
+        if (vm["batchsize"].as<unsigned int>() > 0) {
             cfg_batch_size = vm["batchsize"].as<unsigned int>();
         } else {
             cfg_batch_size = 5;
@@ -119,7 +119,7 @@ static void calculate_thread_count_gpu(boost::program_options::variables_map & v
     }
 
     if (cfg_num_threads < cfg_batch_size) {
-        printf("Number of threads = %d must be larger than batch size = %d\n", cfg_num_threads, cfg_batch_size);
+        printf("Number of threads = %d must be no smaller than batch size = %d\n", cfg_num_threads, cfg_batch_size);
         exit(EXIT_FAILURE);
     }*/
 }
@@ -132,8 +132,8 @@ static void parse_commandline(int argc, char *argv[]) {
     gen_desc.add_options()
         ("help,h", "Show commandline options.")
         ("gtp,g", "Enable GTP mode.")
-        ("threads,t", po::value<unsigned int>(),
-                      "Number of threads to use.")
+        ("threads,t", po::value<unsigned int>()->default_value(0),
+                      "Number of threads to use. Select 0 to let leela-zero pick a reasonable default.")
         ("playouts,p", po::value<int>(),
                        "Weaken engine by limiting the number of playouts. "
                        "Requires --noponder.")
@@ -203,10 +203,16 @@ static void parse_commandline(int argc, char *argv[]) {
         ("logconst", po::value<float>())
         ("softmax_temp", po::value<float>())
         ("fpu_reduction", po::value<float>())
+        ("ci_alpha", po::value<float>())
         ;
 #endif
     // These won't be shown, we use them to catch incorrect usage of the
     // command line.
+    po::options_description ignore("Ignored options");
+#ifndef USE_OPENCL
+    ignore.add_options()
+        ("batchsize", po::value<unsigned int>()->default_value(1), "Max batch size.");
+#endif
     po::options_description h_desc("Hidden options");
     h_desc.add_options()
         ("arguments", po::value<std::vector<std::string>>());
@@ -223,7 +229,7 @@ static void parse_commandline(int argc, char *argv[]) {
 #endif
     // Parse both the above, we will check if any of the latter are present.
     po::options_description all;
-    all.add(visible).add(h_desc);
+    all.add(visible).add(ignore).add(h_desc);
     po::positional_options_description p_desc;
     p_desc.add("arguments", -1);
     po::variables_map vm;
@@ -289,6 +295,9 @@ static void parse_commandline(int argc, char *argv[]) {
     }
     if (vm.count("fpu_reduction")) {
         cfg_fpu_reduction = vm["fpu_reduction"].as<float>();
+    }
+    if (vm.count("ci_alpha")) {
+        cfg_ci_alpha = vm["ci_alpha"].as<float>();
     }
 #endif
 
@@ -373,6 +382,7 @@ static void parse_commandline(int argc, char *argv[]) {
     } else {
 #ifdef USE_OPENCL
         calculate_thread_count_gpu(vm);
+        myprintf("Using OpenCL batch size of %d\n", cfg_batch_size);
 #endif
     }
     myprintf("Using %d thread(s).\n", cfg_num_threads);
@@ -517,6 +527,8 @@ void init_global_objects() {
     // improves reproducibility across platforms.
     Random::get_Rng().seedrandom(cfg_rng_seed);
 
+    Utils::create_z_table();
+
     initialize_network();
 }
 
@@ -556,8 +568,7 @@ int main(int argc, char *argv[]) {
     auto maingame = std::make_unique<GameState>();
 
     /* set board limits */
-    auto komi = 7.5f;
-    maingame->init_game(BOARD_SIZE, komi);
+    maingame->init_game(BOARD_SIZE, KOMI);
 
     if (cfg_benchmark) {
         cfg_quiet = false;

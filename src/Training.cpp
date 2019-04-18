@@ -170,7 +170,7 @@ void Training::record(Network & network, GameState& state, UCTNode& root) {
     step.planes = get_planes(&state);
 
     //auto result =
-    //    network.get_output(&state, Network::Ensemble::DIRECT, 0);
+    //    network.get_output(&state, Network::Ensemble::DIRECT, Network::IDENTITY_SYMMETRY);
     //step.net_winrate = result.winrate;
     step.net_winrate = root.get_net_eval(state.get_to_move());
 

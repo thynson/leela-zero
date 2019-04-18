@@ -57,6 +57,11 @@ static constexpr auto NUM_INTERSECTIONS = BOARD_SIZE * BOARD_SIZE;
 static constexpr auto POTENTIAL_MOVES = NUM_INTERSECTIONS + 1; // including pass
 
 /*
+ * KOMI: Define the default komi to use when training.
+ */
+static constexpr auto KOMI = 7.5f;
+
+/*
  * Features
  *
  * USE_BLAS: Optionally use a basic linear algebra library.
@@ -112,7 +117,7 @@ static constexpr auto POTENTIAL_MOVES = NUM_INTERSECTIONS + 1; // including pass
 #define USE_TUNER
 
 static constexpr auto PROGRAM_NAME = "Leela Zero";
-static constexpr auto PROGRAM_VERSION = "0.16";
+static constexpr auto PROGRAM_VERSION = "0.17";
 
 /*
  * OpenBLAS limitation: the default configuration on some Linuxes
