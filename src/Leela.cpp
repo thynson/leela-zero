@@ -331,6 +331,10 @@ static void parse_commandline(int argc, char *argv[]) {
         cfg_gpus = vm["gpu"].as<std::vector<int>>();
     }
 
+    if (vm.count("batchsize")) {
+        cfg_batch_size = vm["batchsize"].as<std::vector<int>>();
+    }
+
     if (vm.count("worker")) {
         cfg_workers = vm["worker"].as<std::vector<int>>();
     }
@@ -382,7 +386,11 @@ static void parse_commandline(int argc, char *argv[]) {
     } else {
 #ifdef USE_OPENCL
         calculate_thread_count_gpu(vm);
-        myprintf("Using OpenCL batch size of %d\n", cfg_batch_size);
+        myprintf("Using OpenCL batch size of ");
+        for (auto sz : cfg_batch_size) {
+            myprintf("%d, ", sz);
+        }
+        myprintf("\n");
 #endif
     }
     myprintf("Using %d thread(s).\n", cfg_num_threads);
