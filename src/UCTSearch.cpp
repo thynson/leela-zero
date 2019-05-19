@@ -651,20 +651,24 @@ int UCTSearch::est_playouts_left(int elapsed_centis, int time_for_move) const {
 size_t UCTSearch::prune_noncontenders(int color, int elapsed_centis, int time_for_move, bool prune) {
     auto lcb_max = 0.0f;
     auto Nfirst = 0;
+    auto total_visit = 0;
     // There are no cases where the root's children vector gets modified
     // during a multithreaded search, so it is safe to walk it here without
     // taking the (root) node lock.
     for (const auto& node : m_root->get_children()) {
         if (node->valid()) {
             const auto visits = node->get_visits();
+            total_visit += visits;
             if (visits > 0) {
                 lcb_max = std::max(lcb_max, node->get_eval_lcb(color));
             }
             Nfirst = std::max(Nfirst, visits);
         }
     }
-    const auto min_required_visits =
-        Nfirst - est_playouts_left(elapsed_centis, time_for_move);
+    const auto current_est_playouts_left = est_playouts_left(elapsed_centis, time_for_move);
+    const auto min_visits_for_lcb = int(std::ceil(total_visit * cfg_lcb_min_visit_ratio));
+    const auto min_required_visits_for_lcb = std::max(min_visits_for_lcb - current_est_playouts_left, 0);
+    const auto min_required_visits = Nfirst - current_est_playouts_left;
     auto pruned_nodes = size_t{0};
     for (const auto& node : m_root->get_children()) {
         if (node->valid()) {
@@ -673,9 +677,9 @@ size_t UCTSearch::prune_noncontenders(int color, int elapsed_centis, int time_fo
                 visits >= min_required_visits;
             // Avoid pruning moves that could have the best lower confidence
             // bound.
-            const auto high_winrate = visits > 0 ?
-                node->get_raw_eval(color) >= lcb_max : false;
-            const auto prune_this_node = !(has_enough_visits || high_winrate);
+            const auto best_possible_lcb = node->get_eval_lcb(color, std::max(min_visits_for_lcb, visits));
+            const auto high_lcb = visits > min_required_visits_for_lcb && best_possible_lcb >= lcb_max;
+            const auto prune_this_node = !(has_enough_visits || high_lcb);
 
             if (prune) {
                 node->set_active(!prune_this_node);

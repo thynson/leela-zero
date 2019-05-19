@@ -248,7 +248,10 @@ int UCTNode::get_visits() const {
 
 float UCTNode::get_eval_lcb(int color) const {
     // Lower confidence bound of winrate.
-    auto visits = get_visits();
+    return get_eval_lcb(color, get_visits());
+}
+
+float UCTNode::get_eval_lcb(int color, int visits) const {
     if (visits < 2) {
         // Return large negative value if not enough visits.
         return -1e6f + visits;
