@@ -492,9 +492,9 @@ std::pair<UCTNode*, float> UCTNode::uct_select_child(int color, bool is_root) {
 #ifdef UCT_SOFTMAX
     return std::make_pair(best->get(), 1.0f);
 #else
-    return std::make_pair(best->get(), factor(q_of_best, policy_of_best, visits_of_best,
+    return std::make_pair(best->get(), std::pow(factor(q_of_best, policy_of_best, visits_of_best,
                                               q_of_actual_best, policy_of_actual_best, visits_of_actual_best,
-                                              actual_parentvisits));
+                                              actual_parentvisits), cfg_backup_exp));
 #endif
 }
 

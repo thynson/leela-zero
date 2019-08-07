@@ -81,6 +81,7 @@ bool cfg_sgemm_exhaustive;
 bool cfg_tune_only;
 std::vector<int> cfg_batch_size;
 bool cfg_frac_backup;
+float cfg_backup_exp;
 bool cfg_vl_in_parentvisits;
 float cfg_uct_temp;
 #ifdef USE_HALF
@@ -341,6 +342,7 @@ void GTP::setup_default_parameters() {
     // we will re-calculate this on Leela.cpp
     cfg_batch_size = { };
     cfg_frac_backup = true;
+    cfg_backup_exp = 1.0f;
     cfg_vl_in_parentvisits = true;
     cfg_uct_temp = 0.0;
 #ifdef USE_HALF

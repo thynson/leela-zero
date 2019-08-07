@@ -161,6 +161,7 @@ static void parse_commandline(int argc, char *argv[]) {
         ("cpu-only", "Use CPU-only implementation and do not use OpenCL device(s).")
 #endif
         ("disable-frac-backup", "Disable fractional backup feature.")
+        ("exp", po::value<float>()->default_value(cfg_backup_exp), "")
         ("no-vl-in-parentvisits", "No virtual loss in sum of children's visits.")
         ("uct-temp", po::value<float>(), "")
         ;
@@ -269,7 +270,11 @@ static void parse_commandline(int argc, char *argv[]) {
     }
 
     if (vm.count("disable-frac-backup")) {
-        cfg_frac_backup = false;
+        //cfg_frac_backup = false;
+    }
+
+    if (vm.count("exp")) {
+        cfg_backup_exp = vm["exp"].as<float>();
     }
 
     if (vm.count("no-vl-in-parentvisits")) {
