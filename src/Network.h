@@ -54,8 +54,6 @@
 #include "SMP.h"
 #endif
 
-struct BackupData;
-
 // Winograd filter transformation changes 3x3 filters to M + 3 - 1
 constexpr auto WINOGRAD_M = 4;
 constexpr auto WINOGRAD_ALPHA = WINOGRAD_M + 3 - 1;

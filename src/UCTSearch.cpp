@@ -237,7 +237,7 @@ void UCTSearch::update_root() {
     myprintf("to delete: %d nodes\n", to_delete.size());
     if (m_pending_counter && !to_delete.empty()) {
         //ThreadGroup tg(thread_pool);
-        m_delete_futures.add_task([](std::list<UCTNode*> to_delete, std::atomic<int>* pending_counter) {
+        m_delete_futures.add_task([](auto to_delete, auto pending_counter) {
             auto root = to_delete.front();
             to_delete.pop_front();
             ThreadGroup tg0(thread_pool);
@@ -286,7 +286,7 @@ void UCTSearch::update_root() {
     min_pending_netresults = INT_MAX;
 #endif
     // This is protected.
-    m_pending_counter = new std::atomic<int>(0);
+    m_pending_counter = new std::atomic<unsigned>(0);
     release_writer();
 
     {
@@ -372,7 +372,7 @@ float eval_from_score(float board_score) {
 
 void UCTSearch::play_simulation(std::unique_ptr<GameState> currstate,
                                         UCTNode* node,
-                                        std::atomic<int>* pending_counter,
+                                        std::atomic<unsigned>* pending_counter,
                                         int gnum, int i) {
     auto factor = 1.0f;
     BackupData bd;

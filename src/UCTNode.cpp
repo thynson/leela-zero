@@ -57,7 +57,7 @@ UCTNode::UCTNode(int vertex, float policy) : m_move(vertex), m_policy(policy) {
 }
 
 bool UCTNode::first_visit() const {
-    return m_visits == 0.0;
+    return m_visits == 0;
 }
 
 std::array<std::array<int, NUM_INTERSECTIONS>,

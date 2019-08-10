@@ -50,19 +50,7 @@ namespace TimeManagement {
     };
 };
 
-struct BackupData {
-    struct NodeFactor {
-        UCTNode* node;
-        float factor;
-        NodeFactor(UCTNode* node, float factor) : node(node), factor(factor) {}
-    };
-    float eval{ -1.0f };
-    std::vector<NodeFactor> path;
-    int symmetry;
-    std::unique_ptr<GameState> state;
-    std::atomic<int>* pending_counter;
-    //int multiplicity{1};
-};
+
 
 class UCTWorker {
 public:
@@ -116,7 +104,7 @@ public:
     bool is_running() const;
     void increment_playouts();
     void play_simulation(std::unique_ptr<GameState> currstate, UCTNode* node, 
-        std::atomic<int>* pending_counter, int gnum, int i);
+        std::atomic<unsigned>* pending_counter, int gnum, int i);
     std::atomic<int> m_positions{0};
     std::atomic<bool> m_run{false};
     std::mutex m_mutex;
@@ -149,7 +137,7 @@ private:
     void release_reader();
     void acquire_writer();
     void release_writer();
-    std::atomic<int>* m_pending_counter{nullptr};
+    std::atomic<unsigned>* m_pending_counter{nullptr};
     GameState m_rootstate;
     GameState & m_gtpstate;
     std::unique_ptr<GameState> m_last_rootstate;

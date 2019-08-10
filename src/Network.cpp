@@ -756,37 +756,14 @@ void Network::get_output0(
     Netresult_ptr result;
     bool ready = false;
     bool first_visit = false;
-    std::unique_lock<std::mutex> lock(m_nncache.m_mutex);
     if (!skip_cache) {
-        bd.symmetry = 0;
-        result = m_nncache.lookup_and_insert(state->board.get_hash(), false, true, bd, ready);
-        // If we are not generating a self-play game, try to find
-        // symmetries if we are in the early opening.
-        if (!result && !cfg_noise && !cfg_random_cnt
-            && state->get_movenum()
-            < (state->get_timecontrol().opening_moves(BOARD_SIZE) / 2)) {
-            // See if we already have this in the cache.
-            for (auto sym = 1; sym < Network::NUM_SYMMETRIES; ++sym) {
-                const auto hash = state->get_symmetry_hash(sym);
-                bd.symmetry = sym;
-                result = m_nncache.lookup_and_insert(hash, false, true, bd, ready);
-                if (result) break;
-            }
-        }
-        if (!result) {
-            bd.symmetry = Network::IDENTITY_SYMMETRY; // = 0
-            result = m_nncache.lookup_and_insert(state->board.get_hash(), true, false, bd, ready);
-            first_visit = true;
-        }
+        result = m_nncache.lookup_and_insert(bd, ready, first_visit);
     }
     else {
         result = std::make_shared<NNCache::Entry>();
         result->backup_obligations.emplace_back(std::move(bd));
         first_visit = true;
     }
-
-    //bool first_visit = (result->backup_obligations.size() == 1);
-    lock.unlock();
 
     if (ready) {
         m_search->backup(bd, result);

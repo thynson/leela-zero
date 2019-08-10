@@ -104,6 +104,7 @@ extern bool cfg_tune_only;
 extern std::vector<int> cfg_batch_size;
 extern bool cfg_frac_backup;
 extern float cfg_backup_exp;
+extern unsigned cfg_nncache_exp;
 extern bool cfg_vl_in_parentvisits;
 extern float cfg_uct_temp;
 #ifdef USE_HALF

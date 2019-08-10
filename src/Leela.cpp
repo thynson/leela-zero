@@ -162,6 +162,7 @@ static void parse_commandline(int argc, char *argv[]) {
 #endif
         ("disable-frac-backup", "Disable fractional backup feature.")
         ("exp", po::value<float>()->default_value(cfg_backup_exp), "")
+        ("cache-exp", po::value<unsigned>()->default_value(cfg_nncache_exp), "")
         ("no-vl-in-parentvisits", "No virtual loss in sum of children's visits.")
         ("uct-temp", po::value<float>(), "")
         ;
@@ -275,6 +276,10 @@ static void parse_commandline(int argc, char *argv[]) {
 
     if (vm.count("exp")) {
         cfg_backup_exp = vm["exp"].as<float>();
+    }
+
+    if (vm.count("cache-exp")) {
+        cfg_nncache_exp = vm["cache-exp"].as<unsigned>();
     }
 
     if (vm.count("no-vl-in-parentvisits")) {
