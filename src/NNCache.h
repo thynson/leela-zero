@@ -164,6 +164,7 @@ private:
             return nullptr;
         }
         std::shared_ptr<NNCache::Entry> insert(std::uint64_t hash, size_t sz, BackupData& bd) {
+            std::lock_guard<std::mutex> lk(m_mutex);
             // If the cache is too large, remove the oldest entry.
             if (m_order.size() >= sz) {
                 m_cache.erase(m_order.front());
