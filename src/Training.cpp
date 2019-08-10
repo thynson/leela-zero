@@ -172,7 +172,7 @@ void Training::record(Network & network, GameState& state, UCTNode& root) {
     //auto result =
     //    network.get_output(&state, Network::Ensemble::DIRECT, Network::IDENTITY_SYMMETRY);
     //step.net_winrate = result.winrate;
-    step.net_winrate = root.get_net_eval(state.get_to_move());
+    step.net_winrate = root.get_raw_eval(state.get_to_move());
 
     const auto& best_node = root.get_best_root_child(step.to_move);
     step.root_uct_winrate = root.get_eval(step.to_move);

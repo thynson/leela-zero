@@ -48,7 +48,7 @@ public:
     // When we visit a node, add this amount of virtual losses
     // to it to encourage other CPUs to explore other parts of the
     // search tree.
-    static constexpr auto VIRTUAL_LOSS_COUNT = 3.0;
+    static constexpr auto VIRTUAL_LOSS_COUNT = 3;
     std::atomic<std::uint16_t> m_virtual_loss{0};
     std::atomic<std::uint16_t> m_accumulated_vl{0};
     // Defined in UCTNode.cpp
@@ -78,14 +78,14 @@ public:
     double get_visits(visit_type type = WR) const;
     float get_policy() const;
     void set_policy(float policy);
-    float get_eval_variance(float default_var = 0.0f) const;
+    //float get_eval_variance(float default_var = 0.0f) const;
     float get_eval(int tomove) const;
     float get_raw_eval(int tomove, double virtual_loss = 0) const;
-    float get_net_eval(int tomove) const;
+    //float get_net_eval(int tomove) const;
     void virtual_loss(uint16_t vl = 1);
     void virtual_loss_undo(uint16_t vl = 1);
     void update(float eval, uint16_t vl, float factor = 1.0f, float sel_factor = 1.0f);
-    float get_eval_lcb(int color) const;
+    //float get_eval_lcb(int color) const;
 
     // Defined in UCTNodeRoot.cpp, only to be called on m_root in UCTSearch
     void randomize_first_proportionally();
@@ -123,7 +123,7 @@ private:
     void link_nodelist(std::vector<Network::PolicyVertexPair>& nodelist,
                        float min_psa_ratio);
     double get_blackevals() const;
-    void accumulate_eval(float eval);
+    //void accumulate_eval(float eval);
     void kill_superkos(const GameState& state);
     void dirichlet_noise(float epsilon, float alpha);
 
@@ -134,17 +134,17 @@ private:
     // Move
     std::int16_t m_move;
     // UCT
-    std::atomic<double> m_visits{0.0};
+    std::atomic<uint64_t> m_visits{0};
     // std::atomic<double> m_sel_visits{0.0};
     // UCT eval
     float m_policy;
     // Original net eval for this node (not children).
-    float m_net_eval{0.0f};
+    //float m_net_eval{0.0f};
     // Variable used for calculating variance of evaluations.
     // Initialized to small non-zero value to avoid accidental zero variances
     // at low visits.
-    std::atomic<float> m_squared_eval_diff{1e-4f};
-    std::atomic<double> m_blackevals{0.0};
+    //std::atomic<float> m_squared_eval_diff{1e-4f};
+    std::atomic<uint64_t> m_blackevals{0};
     std::atomic<Status> m_status{ACTIVE};
 
 

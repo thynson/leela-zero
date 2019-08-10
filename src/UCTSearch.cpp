@@ -446,7 +446,7 @@ void UCTSearch::play_simulation(std::unique_ptr<GameState> currstate,
         }
 
         case UCTNode::BACKUP:
-            bd.eval = node->get_net_eval(FastBoard::BLACK);
+            bd.eval = node->get_raw_eval(FastBoard::BLACK);
             // print the sequence of moves from bd.path ...
             node->update(bd.eval, 1, 1.0f, factor);
             backup(bd, 1);
@@ -488,11 +488,11 @@ void UCTSearch::dump_stats(FastState & state, UCTNode & parent) {
         tmpstate.play_move(node->get_move());
         auto pv = move + " " + get_pv(tmpstate, *node);
 
-        myprintf("%4s -> %7d (V: %5.2f%%) (LCB: %5.2f%%) (N: %5.2f%%) PV: %s\n",
+        myprintf("%4s -> %7d (V: %5.2f%%) (N: %5.2f%%) PV: %s\n", //(LCB: %5.2f%%)
             move.c_str(),
             (int)node->get_visits(),
             node->get_visits() ? node->get_raw_eval(color)*100.0f : 0.0f,
-            std::max(0.0f, node->get_eval_lcb(color) * 100.0f),
+            //std::max(0.0f, node->get_eval_lcb(color) * 100.0f),
             node->get_policy() * 100.0f,
             pv.c_str());
     }
@@ -531,14 +531,13 @@ void UCTSearch::output_analysis(FastState & state, UCTNode & parent) {
         auto pv = move + (rest_of_pv.empty() ? "" : " " + rest_of_pv);
         auto move_eval = node->get_visits() ? node->get_raw_eval(color) : 0.0f;
         auto policy = node->get_policy();
-        auto lcb = node->get_eval_lcb(color);
+        //auto lcb = node->get_eval_lcb(color);
         auto visits = node->get_visits();
         // Need at least 2 visits for valid LCB.
-        auto lcb_ratio_exceeded = visits > 2 &&
-            visits > max_visits * cfg_lcb_min_visit_ratio;
+        //auto lcb_ratio_exceeded = visits > 2 && visits > max_visits * cfg_lcb_min_visit_ratio;
         // Store data in array
         sortable_data.emplace_back(move, visits,
-                                   move_eval, policy, pv, lcb, lcb_ratio_exceeded);
+            move_eval, policy, pv, move_eval, true); // lcb, lcb_ratio_exceeded);
     }
     parent.release_reader();
     // Sort array to decide order
@@ -852,7 +851,7 @@ size_t UCTSearch::prune_noncontenders(int color, int elapsed_centis, int time_fo
         if (node->valid()) {
             const auto visits = (int)node->get_visits();
             if (visits > 0) {
-                lcb_max = std::max(lcb_max, node->get_eval_lcb(color));
+//                lcb_max = std::max(lcb_max, node->get_eval_lcb(color));
             }
             Nfirst = std::max(Nfirst, visits);
         }
@@ -867,8 +866,7 @@ size_t UCTSearch::prune_noncontenders(int color, int elapsed_centis, int time_fo
                 visits >= min_required_visits;
             // Avoid pruning moves that could have the best lower confidence
             // bound.
-            const auto high_winrate = visits > 0 ?
-                node->get_raw_eval(color) >= lcb_max : false;
+            const auto high_winrate = false; // visits > 0 ? node->get_raw_eval(color) >= lcb_max : false;
             const auto prune_this_node = !(has_enough_visits || high_winrate);
 
             if (prune) {

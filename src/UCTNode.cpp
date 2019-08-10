@@ -69,12 +69,12 @@ void UCTNode::create_children(Network::Netresult& raw_netlist0,
                               float min_psa_ratio) {
 
     Network::Netresult raw_netlist;
-    m_net_eval = raw_netlist.winrate = raw_netlist0.winrate;
+    raw_netlist.winrate = raw_netlist0.winrate;
     const auto to_move = state.board.get_to_move();
     // our search functions evaluate from black's point of view
-    if (state.board.white_to_move()) {
+    /*if (state.board.white_to_move()) {
         m_net_eval = 1.0f - m_net_eval;
-    }
+    }*/
 
     if (!expandable(min_psa_ratio)) {
         acquire_writer();
@@ -202,17 +202,17 @@ void UCTNode::virtual_loss_undo(uint16_t vl) {
 
 void UCTNode::update(float eval, uint16_t vl, float factor, float sel_factor) {
     // Cache values to avoid race conditions.
-    auto old_eval = static_cast<float>(m_blackevals);
-    auto old_visits = static_cast<int>(m_visits);
-    auto old_delta = old_visits > 0 ? eval - old_eval / old_visits : 0.0f;
-    atomic_add(m_visits, double(factor));
-    atomic_add(m_blackevals, double(eval*factor));
+    //auto old_eval = static_cast<float>(m_blackevals);
+    //auto old_visits = static_cast<int>(m_visits);
+    //auto old_delta = old_visits > 0 ? eval - old_eval / old_visits : 0.0f;
+    m_visits += round(ldexp(factor, 32));
+    m_blackevals += round(ldexp(eval*factor, 32));
     //atomic_add(m_sel_visits, double(sel_factor));
     virtual_loss_undo(vl);
-    auto new_delta = eval - (old_eval + eval) / (old_visits + 1);
+    //auto new_delta = eval - (old_eval + eval) / (old_visits + 1);
     // Welford's online algorithm for calculating variance.
-    auto delta = old_delta * new_delta;
-    atomic_add(m_squared_eval_diff, delta);
+    //auto delta = old_delta * new_delta;
+    //atomic_add(m_squared_eval_diff, delta);
 }
 
 bool UCTNode::has_children() const {
@@ -233,8 +233,9 @@ void UCTNode::set_policy(float policy) {
 
 double UCTNode::get_visits(visit_type type) const {
     //if (type == SEL) { return m_sel_visits; } else 
-    if (type == WR) { return m_visits; }
-    else if (type == VL) { return m_visits + m_virtual_loss * VIRTUAL_LOSS_COUNT; }
+    auto v = ldexp(double(m_visits), -32);
+    if (type == WR) { return v; }
+    else if (type == VL) { return v + m_virtual_loss * VIRTUAL_LOSS_COUNT; }
 }
 
 float UCTNode::get_raw_eval(int tomove, double virtual_loss) const {
@@ -244,14 +245,14 @@ float UCTNode::get_raw_eval(int tomove, double virtual_loss) const {
     if (tomove == FastBoard::WHITE) {
         blackeval += virtual_loss;
     }
-    auto eval = static_cast<float>(blackeval / double(visits));
+    auto eval = static_cast<float>(blackeval / visits);
     if (tomove == FastBoard::WHITE) {
         eval = 1.0f - eval;
     }
     return eval;
 }
 
-float UCTNode::get_eval_variance(float default_var) const {
+/*float UCTNode::get_eval_variance(float default_var) const {
     return m_visits > 1 ? m_squared_eval_diff / (m_visits - 1) : default_var;
 }
 
@@ -268,7 +269,7 @@ float UCTNode::get_eval_lcb(int color) const {
     auto z = cached_t_quantile(visits - 1);
 
     return mean - z * stddev;
-}
+}*/
 
 float UCTNode::get_eval(int tomove) const {
     // Due to the use of atomic updates and virtual losses, it is
@@ -276,21 +277,21 @@ float UCTNode::get_eval(int tomove) const {
     // to return a consistent result to the caller by caching the values.
     return get_raw_eval(tomove, m_virtual_loss * VIRTUAL_LOSS_COUNT);
 }
-
+/*
 float UCTNode::get_net_eval(int tomove) const {
     if (tomove == FastBoard::WHITE) {
         return 1.0f - m_net_eval;
     }
     return m_net_eval;
-}
+}*/
 
 double UCTNode::get_blackevals() const {
-    return m_blackevals;
+    return ldexp(double(m_blackevals), -32);
 }
 
-void UCTNode::accumulate_eval(float eval) {
+/*void UCTNode::accumulate_eval(float eval) {
     atomic_add(m_blackevals, double(eval));
-}
+}*/
 
 float uct_value(float q, float p, double v, double v_total) {
     return q + cfg_puct *
@@ -511,6 +512,7 @@ public:
         auto a_visit = a.get_visits();
         auto b_visit = b.get_visits();
 
+        /*
         // Need at least 2 visits for LCB.
         if (m_lcb_min_visits < 2) {
             m_lcb_min_visits = 2;
@@ -526,6 +528,7 @@ public:
                 return a_lcb < b_lcb;
             }
         }
+        */
 
         // if visits are not same, sort on visits
         if (a_visit != b_visit) {
