@@ -407,7 +407,7 @@ std::pair<UCTNode*, float> UCTNode::uct_select_child(int color, bool is_root) {
         // Lower the expected eval for moves that are likely not the best.
         // Do not do this if we have introduced noise at this node exactly
         // to explore more.
-        if (child.is_inflated() && child.get()->m_accumulated_vl >= 48)
+        if (child.is_inflated()) // && child.get()->m_accumulated_vl >= 48)
             winrate = -1.0f;
         winrate -= (is_root? cfg_fpu_root_reduction : cfg_fpu_reduction) * std::sqrt(total_visited_policy);
 
