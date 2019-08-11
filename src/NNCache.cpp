@@ -52,24 +52,25 @@ NNCache::NNCache(int size) {
 std::shared_ptr<NNCache::Entry> NNCache::lookup_and_insert(BackupData& bd, bool& ready, bool& first_visit) {
     auto state = bd.state.get();
     const auto hash = state->board.get_hash();
+    /*
     ++m_lookups;
     bd.symmetry = 0;
     auto result = m_partitions[hash & m_parts]->lookup(hash, bd, ready);
     if (result) {
         ++m_hits;
         return result;
-    }
+    }*/
     // If we are not generating a self-play game, try to find
     // symmetries if we are in the early opening.
     if (!cfg_noise && !cfg_random_cnt
         && state->get_movenum()
         < (state->get_timecontrol().opening_moves(BOARD_SIZE) / 2)) {
         // See if we already have this in the cache.
-        for (auto sym = 1; sym < Network::NUM_SYMMETRIES; ++sym) {
+        for (auto sym = 0; sym < Network::NUM_SYMMETRIES; ++sym) {
             ++m_lookups;
             const auto hash = state->get_symmetry_hash(sym);
             bd.symmetry = sym;
-            result = m_partitions[hash & m_parts]->lookup(hash, bd, ready);
+            auto result = m_partitions[hash & m_parts]->lookup(hash, bd, ready);
             if (result) {
                 ++m_hits;
                 return result;
