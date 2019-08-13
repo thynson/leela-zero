@@ -87,7 +87,7 @@ public:
         const bool skip_cache = false);
 
     static constexpr auto INPUT_MOVES = 8;
-    static constexpr auto PAC_FEA_LEN = 2 * INPUT_MOVES * NUM_INTERSECTIONS / 16; // packed features length
+    static constexpr auto PAC_FEA_LEN = 2 * INPUT_MOVES * NUM_INTERSECTIONS / 8; // packed features length
     static constexpr auto INPUT_CHANNELS = 2 * INPUT_MOVES + 2;
     static constexpr auto OUTPUTS_POLICY = 2;
     static constexpr auto OUTPUTS_VALUE = 1;
@@ -101,7 +101,7 @@ public:
     static void show_heatmap(const FastState * const state,
                              const Netresult & netres, const bool topmoves);
 
-    std::vector<uint16_t> Network::gather_features(const GameState* const state, const int symmetry);
+    std::vector<uint8_t> Network::gather_features(const GameState* const state, const int symmetry);
 
     static std::pair<int, int> get_symmetry(const std::pair<int, int>& vertex,
                                             const int symmetry,
@@ -160,7 +160,7 @@ private:
     //Netresult_ptr get_output_internal0(const GameState* const state,
     //                                   const int symmetry, bool selfcheck = false);
     static void fill_input_plane_pair(const FullBoard& board,
-                                      std::vector<uint16_t>& features,
+                                      std::vector<uint8_t>& features,
                                       int black, int white,
                                       const int symmetry);
     // bool probe_cache(const GameState* const state, Network::Netresult& result);

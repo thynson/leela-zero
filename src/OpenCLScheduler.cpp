@@ -334,7 +334,7 @@ void OpenCLScheduler<net_t>::forward(const std::vector<float>& input,
 
 template <typename net_t>
 void OpenCLScheduler<net_t>::forward0(int gnum, int i,
-              const std::vector<uint16_t>& input,
+              const std::vector<uint8_t>& input,
               const float btm, const float wtm,
               const int tomove,
               const int symmetry,

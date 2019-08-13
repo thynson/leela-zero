@@ -382,7 +382,7 @@ void batchnorm(const size_t channels,
 void CPUPipe::clear_stats() {}
 void CPUPipe::dump_stats() {}
 void CPUPipe::forward0(int gnum, int i,
-    const std::vector<uint16_t>& input,
+    const std::vector<uint8_t>& input,
     const float btm, const float wtm,
     const int tomove,
     const int symmetry,

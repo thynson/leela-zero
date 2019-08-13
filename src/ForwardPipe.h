@@ -66,7 +66,7 @@ public:
                          std::vector<float>& output_pol,
                          std::vector<float>& output_val) = 0;
     virtual void forward0(int gnum, int i,
-                          const std::vector<uint16_t>& input,
+                          const std::vector<uint8_t>& input,
                           const float btm,
                           const float wtm,
                           const int tomove,

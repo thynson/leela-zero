@@ -154,7 +154,7 @@ public:
         return m_layers.size();
     }
 
-    void forward(const uint16_t* input,
+    void forward(const uint8_t* input,
             const net_t* btm,
             std::vector<float>& output_pol,
             std::vector<float>& output_val,
@@ -239,7 +239,7 @@ private:
 
     //std::atomic_flag* buffer_flag;
     std::atomic<int>* batch_stats;
-    std::vector<uint16_t*> inputs;
+    std::vector<uint8_t*> inputs;
     std::vector<net_t*> btms;
     std::vector<BackupEntry*> backup_entries; // one-one correspond to inputs
     //std::atomic<int>* writing_location;

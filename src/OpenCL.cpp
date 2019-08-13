@@ -148,7 +148,7 @@ void OpenCL_Network<net_t>::add_weights(size_t layer,
 }
 
 template <typename net_t>
-void OpenCL_Network<net_t>::forward(const uint16_t* input,
+void OpenCL_Network<net_t>::forward(const uint8_t* input,
                              const net_t* btm,
                              std::vector<float>& output_pol,
                              std::vector<float>& output_val,
@@ -178,7 +178,7 @@ void OpenCL_Network<net_t>::forward(const uint16_t* input,
         const auto n_ceil = ceilMultiple(ceilMultiple(tiles, nwg), vwn);
 
         const auto alloc_feaSize =
-            getOpenCL().m_batch_size * Network::PAC_FEA_LEN * sizeof(uint16_t);
+            getOpenCL().m_batch_size * Network::PAC_FEA_LEN * sizeof(uint8_t);
         const auto alloc_btmSize =
             getOpenCL().m_batch_size * sizeof(net_t);
         const auto alloc_inSize =
@@ -227,7 +227,7 @@ void OpenCL_Network<net_t>::forward(const uint16_t* input,
     std::unique_lock<std::mutex> enqueue_lock(m_enqueue_mutex);
 
     queue.enqueueWriteBuffer(opencl_context.m_inBufferFea, CL_FALSE, 0, 
-        Network::PAC_FEA_LEN * sizeof(uint16_t) * batch_size, input);
+        Network::PAC_FEA_LEN * sizeof(uint8_t) * batch_size, input);
     queue.enqueueWriteBuffer(opencl_context.m_inBufferBtm, CL_FALSE, 0, 
         sizeof(net_t) * batch_size, btm);
 
@@ -1006,7 +1006,7 @@ void OpenCL<net_t>::initialize(const int channels, int num_workers, int batch_si
     inputs.reserve(num_workers);
     backup_entries.reserve(num_workers);
     for (auto i = 0; i < num_workers; i++) {
-        inputs.push_back(new uint16_t[Network::PAC_FEA_LEN * batch_size]);
+        inputs.push_back(new uint8_t[Network::PAC_FEA_LEN * batch_size]);
         btms.push_back(new net_t[batch_size]);
         backup_entries.push_back(new BackupEntry[batch_size]);
     }

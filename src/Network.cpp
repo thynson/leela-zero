@@ -1045,7 +1045,7 @@ void Network::show_heatmap(const FastState* const state,
 }
 
 void Network::fill_input_plane_pair(const FullBoard& board,
-                                    std::vector<uint16_t>& features,
+                                    std::vector<uint8_t>& features,
                                     int black, int white,
                                     const int symmetry) {
     for (auto idx = 0; idx < NUM_INTERSECTIONS; idx++) {
@@ -1056,18 +1056,18 @@ void Network::fill_input_plane_pair(const FullBoard& board,
 
         if (color == FastBoard::BLACK) {
             auto i = black + idx;
-            features[i/16] |= (1 << (i%16));
+            features[i/8] |= (1 << (i%8));
         } else if (color == FastBoard::WHITE) {
             auto i = white + idx;
-            features[i/16] |= (1 << (i%16));
+            features[i/8] |= (1 << (i%8));
         }
     }
 }
 
-std::vector<uint16_t> Network::gather_features(const GameState* const state,
+std::vector<uint8_t> Network::gather_features(const GameState* const state,
     const int symmetry) {
     assert(symmetry >= 0 && symmetry < NUM_SYMMETRIES);
-    std::vector<uint16_t> features(PAC_FEA_LEN, 0);
+    std::vector<uint8_t> features(PAC_FEA_LEN, 0);
 
     const auto to_move = state->get_to_move();
     const auto blacks_move = to_move == FastBoard::BLACK;
