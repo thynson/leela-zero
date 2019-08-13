@@ -204,7 +204,7 @@ int FullBoard::update_board(const int color, const int i) {
     }
 
     // No ko
-    return NO_VERTEX;
+    return i; // NO_VERTEX; // in order to include the last move in m_hash for NNCache
 }
 
 void FullBoard::display_board(int lastmove) {
