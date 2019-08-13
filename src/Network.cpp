@@ -100,14 +100,14 @@ float Network::benchmark_time(int centiseconds) {
     // As a sanity run, try one run with self check.
     // Isn't enough to guarantee correctness but better than nothing,
     // plus for large nets self-check takes a while (1~3 eval per second)
-    get_output(&state, Ensemble::RANDOM_SYMMETRY, -1, false, true, true);
+    //get_output(&state, Ensemble::RANDOM_SYMMETRY, -1, false, true, true);
 
     const Time start;
     for (auto i = size_t{0}; i < cpus; i++) {
         tg.add_task([this, &runcount, start, centiseconds, state]() {
             while (true) {
                 runcount++;
-                get_output(&state, Ensemble::RANDOM_SYMMETRY, -1, false);
+                //get_output(&state, Ensemble::RANDOM_SYMMETRY, -1, false);
                 const Time end;
                 const auto elapsed = Time::timediff_centis(start, end);
                 if (elapsed >= centiseconds) {
@@ -134,7 +134,7 @@ void Network::benchmark(const GameState* const state, const int iterations) {
         tg.add_task([this, &runcount, iterations, state]() {
             while (runcount < iterations) {
                 runcount++;
-                get_output(state, Ensemble::RANDOM_SYMMETRY, -1, false);
+                //get_output(state, Ensemble::RANDOM_SYMMETRY, -1, false);
             }
         });
     }
@@ -812,10 +812,11 @@ void Network::get_output0(
         }
 #endif
     }
-    m_forward->forward0(gnum, i, gather_features(state, symmetry), state->get_to_move(), symmetry, result);
+    auto tomove = state->get_to_move();
+    m_forward->forward0(gnum, i, gather_features(state, symmetry), !tomove, tomove, tomove, symmetry, result);
 }
 
-Network::Netresult Network::get_output(
+/*Network::Netresult Network::get_output(
     const GameState* const state, const Ensemble ensemble, const int symmetry,
     const bool read_cache, const bool write_cache, const bool force_selfcheck) {
     Netresult result;
@@ -829,7 +830,7 @@ Network::Netresult Network::get_output(
         if (probe_cache(state, result)) {
             return result;
         }
-    }*/
+    }
 
     if (ensemble == DIRECT) {
         assert(symmetry >= 0 && symmetry < NUM_SYMMETRIES);
@@ -879,10 +880,10 @@ Network::Netresult Network::get_output(
     /*if (write_cache) {
         // Insert result into cache.
         m_nncache.insert(state->board.get_hash(), result);
-    }*/
+    }
 
     return result;
-}
+}*/
 
 void Network::process_output(
     std::vector<float>& policy_data,
@@ -936,6 +937,7 @@ void Network::process_output(
 #endif
 }
 
+/*
 Network::Netresult Network::get_output_internal(
     const GameState* const state, const int symmetry, bool selfcheck) {
     assert(symmetry >= 0 && symmetry < NUM_SYMMETRIES);
@@ -987,7 +989,7 @@ Network::Netresult Network::get_output_internal(
     result.winrate = winrate;
 
     return result;
-}
+}*/
 
 void Network::show_heatmap(const FastState* const state,
                            const Netresult& result,
@@ -1043,53 +1045,48 @@ void Network::show_heatmap(const FastState* const state,
 }
 
 void Network::fill_input_plane_pair(const FullBoard& board,
-                                    std::vector<float>::iterator black,
-                                    std::vector<float>::iterator white,
+                                    std::vector<uint16_t>& features,
+                                    int black, int white,
                                     const int symmetry) {
     for (auto idx = 0; idx < NUM_INTERSECTIONS; idx++) {
         const auto sym_idx = symmetry_nn_idx_table[symmetry][idx];
         const auto x = sym_idx % BOARD_SIZE;
         const auto y = sym_idx / BOARD_SIZE;
         const auto color = board.get_state(x, y);
+
         if (color == FastBoard::BLACK) {
-            black[idx] = float(true);
+            auto i = black + idx;
+            features[i/16] |= (1 << (i%16));
         } else if (color == FastBoard::WHITE) {
-            white[idx] = float(true);
+            auto i = white + idx;
+            features[i/16] |= (1 << (i%16));
         }
     }
 }
 
-std::vector<float> Network::gather_features(const GameState* const state,
-                                            const int symmetry) {
+std::vector<uint16_t> Network::gather_features(const GameState* const state,
+    const int symmetry) {
     assert(symmetry >= 0 && symmetry < NUM_SYMMETRIES);
-    auto input_data = std::vector<float>(INPUT_CHANNELS * NUM_INTERSECTIONS);
+    std::vector<uint16_t> features(PAC_FEA_LEN, 0);
 
     const auto to_move = state->get_to_move();
     const auto blacks_move = to_move == FastBoard::BLACK;
 
-    const auto black_it = blacks_move ?
-                          begin(input_data) :
-                          begin(input_data) + INPUT_MOVES * NUM_INTERSECTIONS;
-    const auto white_it = blacks_move ?
-                          begin(input_data) + INPUT_MOVES * NUM_INTERSECTIONS :
-                          begin(input_data);
-    const auto to_move_it = blacks_move ?
-        begin(input_data) + 2 * INPUT_MOVES * NUM_INTERSECTIONS :
-        begin(input_data) + (2 * INPUT_MOVES + 1) * NUM_INTERSECTIONS;
+    const auto black_it = blacks_move ? 0 : INPUT_MOVES * NUM_INTERSECTIONS;
+    const auto white_it = blacks_move ? INPUT_MOVES * NUM_INTERSECTIONS : 0;
 
     const auto moves = std::min<size_t>(state->get_movenum() + 1, INPUT_MOVES);
+
     // Go back in time, fill history boards
-    for (auto h = size_t{0}; h < moves; h++) {
+    for (auto h = size_t{ 0 }; h < moves; h++) {
         // collect white, black occupation planes
         fill_input_plane_pair(state->get_past_board(h),
-                              black_it + h * NUM_INTERSECTIONS,
-                              white_it + h * NUM_INTERSECTIONS,
-                              symmetry);
+            features,
+            black_it + h * NUM_INTERSECTIONS,
+            white_it + h * NUM_INTERSECTIONS,
+            symmetry);
     }
-
-    std::fill(to_move_it, to_move_it + NUM_INTERSECTIONS, float(true));
-
-    return input_data;
+    return features;
 }
 
 std::pair<int, int> Network::get_symmetry(const std::pair<int, int>& vertex,

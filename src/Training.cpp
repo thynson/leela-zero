@@ -151,16 +151,16 @@ void Training::clear_training() {
 }
 
 TimeStep::NNPlanes Training::get_planes(const GameState* const state) {
-    const auto input_data = Network::gather_features(state, 0);
+//    const auto input_data = Network::gather_features(state, 0);
 
     auto planes = TimeStep::NNPlanes{};
-    planes.resize(Network::INPUT_CHANNELS);
+    /*planes.resize(Network::INPUT_CHANNELS);
 
     for (auto c = size_t{0}; c < Network::INPUT_CHANNELS; c++) {
         for (auto idx = 0; idx < NUM_INTERSECTIONS; idx++) {
             planes[c][idx] = bool(input_data[c * NUM_INTERSECTIONS + idx]);
         }
-    }
+    }*/
     return planes;
 }
 

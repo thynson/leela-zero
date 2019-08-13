@@ -866,7 +866,7 @@ void GTP::execute(GameState & game, const std::string& xinput) {
         cmdstream >> symmetry;
 
         Network::Netresult vec;
-        if (cmdstream.fail()) {
+        /*if (cmdstream.fail()) {
             // Default = DIRECT with no symmetric change
             vec = s_network->get_output(
                 &game, Network::Ensemble::DIRECT,
@@ -887,7 +887,7 @@ void GTP::execute(GameState & game, const std::string& xinput) {
 
         if (symmetry != "all") {
             Network::show_heatmap(&game, vec, false);
-        }
+        }*/
 
         gtp_printf(id, "");
         return;

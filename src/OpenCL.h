@@ -70,12 +70,16 @@ class OpenCLContext {
 private:
     bool m_is_initialized{false};
     cl::CommandQueue m_commandqueue;
+    cl::Kernel m_features_kernel;
+    cl::Kernel m_btm_kernel;
     cl::Kernel m_convolve1_kernel;
     cl::Kernel m_merge_kernel;
     cl::Kernel m_in_transform_kernel;
     cl::Kernel m_sgemm_kernel;
     cl::Kernel m_out_transform_bn_kernel;
     cl::Kernel m_out_transform_bn_in_kernel;
+    cl::Buffer m_inBufferFea;
+    cl::Buffer m_inBufferBtm;
     cl::Buffer m_inBuffer;
     cl::Buffer m_inBuffer2;
     cl::Buffer m_VBuffer;
@@ -150,7 +154,8 @@ public:
         return m_layers.size();
     }
 
-    void forward(const net_t* input,
+    void forward(const uint16_t* input,
+            const net_t* btm,
             std::vector<float>& output_pol,
             std::vector<float>& output_val,
             OpenCLContext & opencl_context,
@@ -234,7 +239,8 @@ private:
 
     //std::atomic_flag* buffer_flag;
     std::atomic<int>* batch_stats;
-    std::vector<net_t*> inputs;
+    std::vector<uint16_t*> inputs;
+    std::vector<net_t*> btms;
     std::vector<BackupEntry*> backup_entries; // one-one correspond to inputs
     //std::atomic<int>* writing_location;
     std::atomic<int>* written_location;

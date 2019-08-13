@@ -159,7 +159,7 @@ void OpenCLScheduler<net_t>::initialize(const int channels) {
     else while (cfg_batch_size.size() < num_gpus)
         cfg_batch_size.push_back(cfg_batch_size.back());
 
-    constexpr auto in_size = Network::INPUT_CHANNELS * BOARD_SIZE * BOARD_SIZE;
+    constexpr auto in_size = Network::INPUT_CHANNELS * NUM_INTERSECTIONS;
 
     int gnum = 0;
     for (auto & opencl : m_opencl) {
@@ -334,18 +334,17 @@ void OpenCLScheduler<net_t>::forward(const std::vector<float>& input,
 
 template <typename net_t>
 void OpenCLScheduler<net_t>::forward0(int gnum, int i,
-              const std::vector<float>& input,
+              const std::vector<uint16_t>& input,
+              const float btm, const float wtm,
               const int tomove,
               const int symmetry,
               Netresult_ptr result) {
-    constexpr auto in_size = Network::INPUT_CHANNELS * BOARD_SIZE * BOARD_SIZE;
 
     auto& opencl = m_opencl[gnum];
     auto& written_loc = opencl->written_location[i];
     auto loc = written_loc.load();
-    std::transform(input.begin(), input.end(),
-        opencl->inputs[i] + in_size * loc,
-        [](float x) {return (net_t)x; });
+    std::copy(begin(input), end(input), opencl->inputs[i] + Network::PAC_FEA_LEN * loc);
+    opencl->btms[i][loc] = btm;
     opencl->backup_entries[i][loc] = { tomove, symmetry, result };
     written_loc++;
     m_search->m_positions++;
@@ -365,6 +364,7 @@ void OpenCLScheduler<net_t>::batch_worker(const size_t gnum, const size_t i) {
     //auto& writing_loc = opencl->writing_location[i];
     auto& written_loc = opencl->written_location[i];
     auto& inputs = opencl->inputs[i];
+    auto& btms = opencl->btms[i];
     auto& entries = opencl->backup_entries[i];
 
     auto batch_output_pol = std::vector<float>(out_pol_size * batch_size);
@@ -378,7 +378,7 @@ void OpenCLScheduler<net_t>::batch_worker(const size_t gnum, const size_t i) {
             opencl->m_occupied++;
             batch_output_pol.resize(out_pol_size * count);
             batch_output_val.resize(out_val_size * count);
-            m_networks[gnum]->forward(inputs, batch_output_pol, batch_output_val, context, *this, count);
+            m_networks[gnum]->forward(inputs, btms, batch_output_pol, batch_output_val, context, *this, count);
             for (auto index = 0; index < count; ) {
                 std::vector<float> out_p(begin(batch_output_pol) + out_pol_size * index,
                     begin(batch_output_pol) + out_pol_size * (index + 1));

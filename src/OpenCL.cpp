@@ -104,6 +104,10 @@ template <typename net_t>
 void OpenCL<net_t>::ensure_context_initialized(OpenCLContext &opencl_context) {
     if (!opencl_context.m_is_initialized) {
         // Make kernels
+        opencl_context.m_features_kernel =
+            cl::Kernel(m_program, "decode_features");
+        opencl_context.m_btm_kernel =
+            cl::Kernel(m_program, "fill_btm");
         opencl_context.m_convolve1_kernel =
             cl::Kernel(m_program, "convolve1");
         opencl_context.m_merge_kernel =
@@ -144,7 +148,8 @@ void OpenCL_Network<net_t>::add_weights(size_t layer,
 }
 
 template <typename net_t>
-void OpenCL_Network<net_t>::forward(const net_t* input,
+void OpenCL_Network<net_t>::forward(const uint16_t* input,
+                             const net_t* btm,
                              std::vector<float>& output_pol,
                              std::vector<float>& output_val,
                              OpenCLContext & opencl_context,
@@ -172,6 +177,10 @@ void OpenCL_Network<net_t>::forward(const net_t* input,
         const auto m_ceil = ceilMultiple(ceilMultiple(max_channels, mwg), vwm);
         const auto n_ceil = ceilMultiple(ceilMultiple(tiles, nwg), vwn);
 
+        const auto alloc_feaSize =
+            getOpenCL().m_batch_size * Network::PAC_FEA_LEN * sizeof(uint16_t);
+        const auto alloc_btmSize =
+            getOpenCL().m_batch_size * sizeof(net_t);
         const auto alloc_inSize =
             getOpenCL().m_batch_size * NUM_INTERSECTIONS * max_channels * sizeof(net_t);
         const auto alloc_vm_size =
@@ -179,6 +188,12 @@ void OpenCL_Network<net_t>::forward(const net_t* input,
 
         auto v_zeros = std::vector<net_t>(alloc_vm_size);
 
+        opencl_context.m_inBufferFea = cl::Buffer(
+            m_opencl.m_context,
+            CL_MEM_READ_WRITE, alloc_feaSize);
+        opencl_context.m_inBufferBtm = cl::Buffer(
+            m_opencl.m_context,
+            CL_MEM_READ_WRITE, alloc_btmSize);
         opencl_context.m_inBuffer = cl::Buffer(
             m_opencl.m_context,
             CL_MEM_READ_WRITE, alloc_inSize);
@@ -211,8 +226,45 @@ void OpenCL_Network<net_t>::forward(const net_t* input,
 
     std::unique_lock<std::mutex> enqueue_lock(m_enqueue_mutex);
 
-    constexpr auto in_size = Network::INPUT_CHANNELS * BOARD_SIZE * BOARD_SIZE;
-    queue.enqueueWriteBuffer(inBuffer, CL_FALSE, 0, sizeof(net_t) * in_size * batch_size, input);
+    queue.enqueueWriteBuffer(opencl_context.m_inBufferFea, CL_FALSE, 0, 
+        Network::PAC_FEA_LEN * sizeof(uint16_t) * batch_size, input);
+    queue.enqueueWriteBuffer(opencl_context.m_inBufferBtm, CL_FALSE, 0, 
+        sizeof(net_t) * batch_size, btm);
+
+    const auto in_size = Network::INPUT_CHANNELS * NUM_INTERSECTIONS;
+
+    auto& features_kernel = opencl_context.m_features_kernel;
+    auto& btm_kernel = opencl_context.m_btm_kernel;
+    try {
+        features_kernel.setArg(0, opencl_context.m_inBufferFea);
+        features_kernel.setArg(1, inBuffer);
+        features_kernel.setArg(2, Network::PAC_FEA_LEN);
+        features_kernel.setArg(3, in_size);
+
+        queue.enqueueNDRangeKernel(features_kernel, cl::NullRange,
+            cl::NDRange(batch_size, Network::PAC_FEA_LEN));
+    }
+    catch (const cl::Error &e) {
+        std::cerr << "Error in decode_features: " << e.what() << ": "
+            << e.err() << std::endl;
+        throw;
+    }
+
+    try {
+        btm_kernel.setArg(0, opencl_context.m_inBufferBtm);
+        btm_kernel.setArg(1, inBuffer);
+        btm_kernel.setArg(2, 2 * Network::INPUT_MOVES * NUM_INTERSECTIONS);
+        btm_kernel.setArg(3, NUM_INTERSECTIONS);
+        btm_kernel.setArg(4, in_size);
+
+        queue.enqueueNDRangeKernel(btm_kernel, cl::NullRange,
+            cl::NDRange(batch_size));
+    }
+    catch (const cl::Error &e) {
+        std::cerr << "Error in fill_btm: " << e.what() << ": "
+            << e.err() << std::endl;
+        throw;
+    }
 
     // Fused in_out transformation kernel is slower with big batch_sizes than
     // calling out and in transformations separately.
@@ -949,14 +1001,13 @@ void OpenCL<net_t>::initialize(const int channels, int num_workers, int batch_si
 
     m_init_ok = true;
     
-    constexpr auto in_size = Network::INPUT_CHANNELS * BOARD_SIZE * BOARD_SIZE;
-
     batch_stats = new std::atomic<int>[batch_size]();
     rounds = new std::atomic<int>[num_workers]();
     inputs.reserve(num_workers);
     backup_entries.reserve(num_workers);
     for (auto i = 0; i < num_workers; i++) {
-        inputs.push_back(new net_t[in_size * batch_size]);
+        inputs.push_back(new uint16_t[Network::PAC_FEA_LEN * batch_size]);
+        btms.push_back(new net_t[batch_size]);
         backup_entries.push_back(new BackupEntry[batch_size]);
     }
     //writing_location = new std::atomic<int>[num_workers];
