@@ -59,12 +59,16 @@ public:
     void create_children(Network::Netresult& raw_netlist,
                           int symmetry,
                           const GameState& state,
+                          bool branch_node,
                           float min_psa_ratio = 0.0f);
 
     const std::vector<UCTNodePointer>& get_children() const;
     void sort_children(int color, float lcb_min_visits);
     UCTNode& get_best_root_child(int color, bool running = false);
     std::pair<UCTNode*, float> uct_select_child(int color, bool is_root);
+    bool is_branch_node() const {
+        return m_children[0].get_move() == FastBoard::NO_VERTEX;
+    }
 
     //size_t count_nodes_and_clear_expand_state();
     bool first_visit() const;

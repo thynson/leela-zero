@@ -163,6 +163,7 @@ static void parse_commandline(int argc, char *argv[]) {
         ("disable-frac-backup", "Disable fractional backup feature.")
         ("exp", po::value<float>()->default_value(cfg_backup_exp), "")
         ("cache-exp", po::value<unsigned>()->default_value(cfg_nncache_exp), "")
+        ("contempt", po::value<float>()->default_value(cfg_contempt_factor), "")
         ("no-vl-in-parentvisits", "No virtual loss in sum of children's visits.")
         ("uct-temp", po::value<float>(), "")
         ;
@@ -280,6 +281,20 @@ static void parse_commandline(int argc, char *argv[]) {
 
     if (vm.count("cache-exp")) {
         cfg_nncache_exp = vm["cache-exp"].as<unsigned>();
+    }
+
+    if (vm.count("contempt")) {
+        cfg_contempt_factor = vm["contempt"].as<float>();
+        if (cfg_contempt_factor < 0.0) {
+            cfg_contempt_factor = 0.0;
+        }
+        if (cfg_contempt_factor > 1.0f) {
+            cfg_superior_side = FastBoard::BLACK;
+            cfg_contempt_factor = 1.0f / cfg_contempt_factor;
+        }
+        else if (cfg_contempt_factor < 1.0f) {
+            cfg_superior_side = FastBoard::WHITE;
+        }
     }
 
     if (vm.count("no-vl-in-parentvisits")) {

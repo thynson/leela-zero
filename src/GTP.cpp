@@ -83,6 +83,8 @@ std::vector<int> cfg_batch_size;
 bool cfg_frac_backup;
 float cfg_backup_exp;
 unsigned cfg_nncache_exp;
+int cfg_superior_side;
+float cfg_contempt_factor;
 bool cfg_vl_in_parentvisits;
 float cfg_uct_temp;
 #ifdef USE_HALF
@@ -345,6 +347,8 @@ void GTP::setup_default_parameters() {
     cfg_frac_backup = true;
     cfg_backup_exp = 1.0f;
     cfg_nncache_exp = 4;
+    cfg_superior_side = FastBoard::INVAL;
+    cfg_contempt_factor = 1.0f;
     cfg_vl_in_parentvisits = true;
     cfg_uct_temp = 0.0;
 #ifdef USE_HALF

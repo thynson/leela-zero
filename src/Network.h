@@ -101,7 +101,7 @@ public:
     static void show_heatmap(const FastState * const state,
                              const Netresult & netres, const bool topmoves);
 
-    std::vector<uint8_t> Network::gather_features(const GameState* const state, const int symmetry);
+    std::vector<uint8_t> gather_features(const GameState* const state, const int symmetry);
 
     static std::pair<int, int> get_symmetry(const std::pair<int, int>& vertex,
                                             const int symmetry,

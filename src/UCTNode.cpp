@@ -65,7 +65,8 @@ std::array<std::array<int, NUM_INTERSECTIONS>,
 
 void UCTNode::create_children(Network::Netresult& raw_netlist0,
                               int symmetry,
-                              const GameState& state, 
+                              const GameState& state,
+                              bool branch_node,
                               float min_psa_ratio) {
 
     Network::Netresult raw_netlist;
@@ -88,6 +89,10 @@ void UCTNode::create_children(Network::Netresult& raw_netlist0,
     raw_netlist.policy_pass = raw_netlist0.policy_pass;
 
     std::vector<Network::PolicyVertexPair> nodelist;
+
+    if (branch_node) {
+        nodelist.emplace_back(1.0f, FastBoard::NO_VERTEX);
+    }
 
     auto legal_sum = 0.0f;
     for (auto i = 0; i < NUM_INTERSECTIONS; i++) {
@@ -125,8 +130,8 @@ void UCTNode::create_children(Network::Netresult& raw_netlist0,
 
     if (legal_sum > std::numeric_limits<float>::min()) {
         // re-normalize after removing illegal moves.
-        for (auto& node : nodelist) {
-            node.first /= legal_sum;
+        for (int i = branch_node; i < nodelist.size(); ++i) {
+            nodelist[i].first /= legal_sum;
         }
     }
     else {
@@ -232,8 +237,8 @@ void UCTNode::set_policy(float policy) {
 }
 
 double UCTNode::get_visits(visit_type type) const {
-    //if (type == SEL) { return m_sel_visits; } else 
     auto v = ldexp(double(m_visits), -32);
+    //if (type == SEL) { return m_sel_visits; } else 
     if (type == WR) { return v; }
     else if (type == VL) { return v + m_virtual_loss * VIRTUAL_LOSS_COUNT; }
 }
@@ -356,9 +361,34 @@ std::pair<UCTNode*, float> UCTNode::uct_select_child(int color, bool is_root) {
     }
     if (!cfg_vl_in_parentvisits) { parentvisits = actual_parentvisits; }
     */
-    auto actual_parentvisits = get_visits(); 
+    auto branch_node = is_branch_node();
+
+    auto actual_parentvisits = get_visits();
     // will be somewhat smaller than sum of children visits due to fractional backup
     auto parentvisits = actual_parentvisits;
+    if (branch_node) {
+        auto inferior_visits = m_children[0].get_visits();
+        if (parentvisits * cfg_contempt_factor >= inferior_visits + 1.0f) {
+            m_children[0].inflate();
+            return std::make_pair(m_children[0].get(), 0.0f);
+        } else if (inferior_visits == 0.0) {
+            m_children[1].inflate();
+            return std::make_pair(m_children[1].get(), 1.0f);
+        } else {
+            m_children[0]->acquire_reader();
+            auto p = m_children[0]->uct_select_child(color, is_root);
+            m_children[0]->release_reader();
+            auto move = p.first->get_move();
+            for (int i = 1; i < m_children.size(); ++i) {
+                if (m_children[i].get_move() == move) {
+                    m_children[i].inflate();
+                    return std::make_pair(m_children[i].get(), p.second);
+                }
+            }
+            printf("problem!");
+        }
+    }
+
     if (cfg_vl_in_parentvisits) { parentvisits = get_visits(VL); }
 
     const auto numerator = std::sqrt(double(parentvisits) *
@@ -396,7 +426,7 @@ std::pair<UCTNode*, float> UCTNode::uct_select_child(int color, bool is_root) {
     std::vector<float> pucts;
 #endif
 
-    for (auto i = 0; i < m_children.size(); i++) {
+    for (int i = 0; i < m_children.size(); i++) {
         auto& child = m_children[i];
         if (!child.active()) {
             continue;
@@ -407,7 +437,7 @@ std::pair<UCTNode*, float> UCTNode::uct_select_child(int color, bool is_root) {
         // Lower the expected eval for moves that are likely not the best.
         // Do not do this if we have introduced noise at this node exactly
         // to explore more.
-        if (child.is_inflated()) // && child.get()->m_accumulated_vl >= 48)
+        if (child.is_inflated() && child.get()->m_lock >= 85) // child.get()->m_accumulated_vl >= 48)
             winrate = -1.0f;
         winrate -= (is_root? cfg_fpu_root_reduction : cfg_fpu_reduction) * std::sqrt(total_visited_policy);
 
@@ -551,7 +581,7 @@ private:
 void UCTNode::sort_children(int color, float lcb_min_visits) {
     while (!pre_acquire_writer()) {}
     acquire_writer();
-    std::stable_sort(rbegin(m_children), rend(m_children), NodeComp(color, lcb_min_visits));
+    std::stable_sort(rbegin(m_children), rend(m_children) - is_branch_node(), NodeComp(color, lcb_min_visits));
     release_writer();
 }
 
@@ -565,8 +595,9 @@ UCTNode& UCTNode::get_best_root_child(int color, bool running) {
         max_visits = std::max(max_visits, (int)node.get_visits());
     }
 
-    auto ret = std::max_element(begin(m_children), end(m_children),
+    auto ret = std::max_element(begin(m_children) + is_branch_node(), end(m_children),
                                 NodeComp(color, cfg_lcb_min_visit_ratio * max_visits));
+    if (ret == end(m_children)) printf("Problem!");
     release_reader();
     ret->inflate();
 

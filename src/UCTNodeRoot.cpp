@@ -57,8 +57,9 @@ UCTNode* UCTNode::get_first_child() {
         release_reader();
         return nullptr;
     }
+    auto ret = is_branch_node() ? m_children[1].get() : m_children[0].get();
     release_reader();
-    return m_children.front().get();
+    return ret;
 }
 
 void UCTNode::kill_superkos(const GameState& state) {
@@ -221,9 +222,6 @@ void UCTNode::inflate_all_children() {
 
 void UCTNode::prepare_root_node(GameState& root_state) {
 
-    Utils::myprintf("root eval=%f\n", get_raw_eval(root_state.get_to_move()));
-    // get_best_child etc. can't work before this? should forbid them from acquiring reader ?
-
     // There are a lot of special cases where code assumes
     // all children of the root are inflated, so do that.
     inflate_all_children();
@@ -231,6 +229,9 @@ void UCTNode::prepare_root_node(GameState& root_state) {
     // Remove illegal moves, so the root move list is correct.
     // This also removes a lot of special cases.
     kill_superkos(root_state);
+
+    Utils::myprintf("root eval=%f\n", get_raw_eval(root_state.get_to_move()));
+    // get_best_child etc. can't work before this? should forbid them from acquiring reader ?
 
     if (cfg_noise) { // need writer privilege..
         // Adjust the Dirichlet noise's alpha constant to the board size

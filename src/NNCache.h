@@ -51,6 +51,7 @@ struct BackupData {
     float eval{ -1.0f };
     std::vector<NodeFactor> path;
     int symmetry;
+    bool branch_node;
     std::unique_ptr<GameState> state;
     std::atomic<unsigned>* pending_counter;
     //int multiplicity{1};

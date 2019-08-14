@@ -306,9 +306,9 @@ void UCTSearch::backup(BackupData& bd, Netresult_ptr netresult) {
     auto node = path.back().node;
     auto is_root = bd.path.size() == 1;
     auto min_psa_ratio = is_root ? 0.0 : UCTNode::get_min_psa_ratio();
-    auto first_visit = node->get_visits() == 0.0;
     
-    node->create_children(netresult->result, bd.symmetry, *bd.state, min_psa_ratio);
+    node->create_children(netresult->result, bd.symmetry, *bd.state, bd.branch_node, min_psa_ratio);
+    auto first_visit = node->get_visits() == 0.0;
     auto vl = node->m_accumulated_vl.exchange(0);
     if (first_visit) {
         auto eval = netresult->result.winrate;
@@ -378,6 +378,7 @@ void UCTSearch::play_simulation(std::unique_ptr<GameState> currstate,
     BackupData bd;
     bd.pending_counter = pending_counter;
     bool is_root = true;
+    bool superior_mind = true;
     while (true) {
         bd.path.emplace_back(node, factor);
 
@@ -391,6 +392,7 @@ void UCTSearch::play_simulation(std::unique_ptr<GameState> currstate,
 #ifdef ACCUM_DEBUG
         if(!is_root) max_vl = std::max(max_vl.load(), uint16_t(node->m_virtual_loss + 1));
 #endif
+
         switch (node->get_action(is_root && !m_root_prepared)) {
 
         case UCTNode::WRITE: // expand the node
@@ -400,6 +402,7 @@ void UCTSearch::play_simulation(std::unique_ptr<GameState> currstate,
             max_pending_backups = std::max(pending_backups.load(), max_pending_backups.load());
             if (!is_root) { max_pending_w_mult = std::max(pending_w_mult.load(), max_pending_w_mult.load()); }
 #endif
+            bd.branch_node = superior_mind && currstate->get_to_move() != cfg_superior_side;
             bd.state = std::move(currstate);
             m_network.get_output0(gnum, i, bd, Network::Ensemble::RANDOM_SYMMETRY);
             return;
@@ -427,11 +430,16 @@ void UCTSearch::play_simulation(std::unique_ptr<GameState> currstate,
                 node = new_node;
                 factor = child_factor.second;
                 auto move = node->get_move();
-                currstate->play_move(move);
-                if (move != FastBoard::PASS && currstate->superko()) {
-                    node->invalidate();
-                    failed_simulation(bd, 1);
-                    return;
+                if (move == FastBoard::NO_VERTEX) {
+                    superior_mind = false;
+                }
+                else {
+                    currstate->play_move(move);
+                    if (move != FastBoard::PASS && currstate->superko()) {
+                        node->invalidate();
+                        failed_simulation(bd, 1);
+                        return;
+                    }
                 }
                 break;
             }
@@ -657,7 +665,7 @@ int UCTSearch::get_best_move(passflag_t passflag) {
     }
 
     // Make sure best is first
-    m_root->sort_children(color,  cfg_lcb_min_visit_ratio * max_visits);
+    m_root->sort_children(color, cfg_lcb_min_visit_ratio * max_visits);
 
     // Check whether to randomize the best move proportional
     // to the playout counts, early game only.
@@ -1017,7 +1025,7 @@ int UCTSearch::think(int color, passflag_t passflag) {
     // Display search info.
     myprintf("\n");
     dump_stats(m_rootstate, *m_root);
-    Training::record(m_network, m_rootstate, *m_root);
+    //Training::record(m_network, m_rootstate, *m_root);
 
     Time elapsed;
     int elapsed_centis = Time::timediff_centis(start, elapsed);
