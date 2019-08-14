@@ -402,7 +402,7 @@ void UCTSearch::play_simulation(std::unique_ptr<GameState> currstate,
             max_pending_backups = std::max(pending_backups.load(), max_pending_backups.load());
             if (!is_root) { max_pending_w_mult = std::max(pending_w_mult.load(), max_pending_w_mult.load()); }
 #endif
-            bd.branch_node = superior_mind && currstate->get_to_move() != cfg_superior_side;
+            bd.branch_node = superior_mind && !currstate->get_to_move() == cfg_superior_side;
             bd.state = std::move(currstate);
             m_network.get_output0(gnum, i, bd, Network::Ensemble::RANDOM_SYMMETRY);
             return;
