@@ -545,7 +545,7 @@ void UCTSearch::output_analysis(FastState & state, UCTNode & parent) {
         //auto lcb_ratio_exceeded = visits > 2 && visits > max_visits * cfg_lcb_min_visit_ratio;
         // Store data in array
         sortable_data.emplace_back(move, visits,
-            move_eval, policy, pv, move_eval, true); // lcb, lcb_ratio_exceeded);
+            move_eval, policy, pv, move_eval, false); // lcb, lcb_ratio_exceeded);
     }
     parent.release_reader();
     // Sort array to decide order
