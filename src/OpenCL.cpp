@@ -238,11 +238,11 @@ void OpenCL_Network<net_t>::forward(const uint8_t* input,
     try {
         features_kernel.setArg(0, opencl_context.m_inBufferFea);
         features_kernel.setArg(1, inBuffer);
-        features_kernel.setArg(2, Network::PAC_FEA_LEN);
+        features_kernel.setArg(2, 722);
         features_kernel.setArg(3, in_size);
 
         queue.enqueueNDRangeKernel(features_kernel, cl::NullRange,
-            cl::NDRange(batch_size, Network::PAC_FEA_LEN));
+            cl::NDRange(batch_size, 722));
     }
     catch (const cl::Error &e) {
         std::cerr << "Error in decode_features: " << e.what() << ": "
