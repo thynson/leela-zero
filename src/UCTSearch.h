@@ -79,7 +79,7 @@ public:
         ~1.6GiB on 32-bits and about 5.2GiB on 64-bits.
     */
     static constexpr size_t DEFAULT_MAX_MEMORY =
-        (sizeof(void*) == 4 ? 1'600'000'000 : 5'200'000'000);
+        (sizeof(void*) == 4 ? 1'600'000'000 : 15'600'000'000);
 
     /*
         Minimum allowed size for maximum tree size.

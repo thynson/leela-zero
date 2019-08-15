@@ -386,6 +386,7 @@ std::pair<UCTNode*, float> UCTNode::uct_select_child(int color, bool is_root) {
                 }
             }
             printf("problem!");
+            return std::make_pair(nullptr, 0.0);
         }
     }
 
