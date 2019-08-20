@@ -30,8 +30,11 @@
 #ifndef CONFIG_H_INCLUDED
 #define CONFIG_H_INCLUDED
 
-#define SCHEDULE_DEBUG
-#define ACCUM_DEBUG
+#define DISPLAY_TIME
+//#define DISPLAY_BOARD
+//#define DEBUG_INFO
+//#define SEARCH_INFO
+//#define ACCUM_DEBUG
 //#define LOCK_DEBUG
 //#define UCT_SOFTMAX
 /*

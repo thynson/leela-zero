@@ -157,8 +157,9 @@ bool UCTSearch::advance_to_new_rootstate(std::list<UCTNode*>& to_delete) {
         m_delete_futures.front().wait_all();
         m_delete_futures.pop_front();
     }*/
-
+#ifdef DEBUG_INFO
     myprintf("entered going forward in tree\n");
+#endif
     // Try to replay moves advancing m_root
     for (auto i = 0; i < depth; i++) {
         test->forward_move();
@@ -234,7 +235,9 @@ void UCTSearch::update_root() {
         }
         m_root = std::make_unique<UCTNode>(FastBoard::PASS, 0.0f);
     }
+#ifdef DEBUG_INFO
     myprintf("to delete: %d nodes\n", to_delete.size());
+#endif
     if (m_pending_counter && !to_delete.empty()) {
         //ThreadGroup tg(thread_pool);
         m_delete_futures.add_task([](auto to_delete, auto pending_counter) {
@@ -242,18 +245,24 @@ void UCTSearch::update_root() {
             to_delete.pop_front();
             ThreadGroup tg0(thread_pool);
             while (*pending_counter > 0) {
+#ifdef DEBUG_INFO
                 myprintf("pending count: %d\n", pending_counter->load());
                 myprintf("root vl: %d\n", root->m_virtual_loss.load());
+#endif
                 std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
+#ifdef DEBUG_INFO
             myprintf("root virtual loss at deletion: %d\n", root->m_virtual_loss.load());
+#endif
             for (auto node : to_delete) {
                 tg0.add_task([node]() { delete node; });
             }
             delete root;
             //tg0.wait_all();
             delete pending_counter;
+#ifdef DEBUG_INFO
             myprintf("deleted!\n");
+#endif
         }, to_delete, m_pending_counter);
         //m_delete_futures.push_back(std::move(tg));
     }
@@ -922,10 +931,12 @@ bool UCTSearch::have_alternate_moves(int elapsed_centis, int time_for_move) {
     // the remaining time is too short to let another move win, so
     // avoid spamming this message every move. We'll print it if we
     // save at least half a second.
+#ifdef SEARCH_INFO
     if (time_for_move - elapsed_centis > 50) {
         myprintf("%.1fs left, stopping early.\n",
                     (time_for_move - elapsed_centis) / 100.0f);
     }
+#endif
     return false;
 }
 
@@ -970,8 +981,9 @@ int UCTSearch::think(int color, passflag_t passflag) {
         m_rootstate.get_timecontrol().max_time_for_move(
             m_rootstate.board.get_boardsize(),
             color, m_rootstate.get_movenum());
-
+#ifdef SEARCH_INFO
     myprintf("Thinking at most %.1f seconds...\n", time_for_move/100.0f);
+#endif
     auto keeprunning = true;
     auto last_update = 0;
     auto last_output = 0;
@@ -994,7 +1006,9 @@ int UCTSearch::think(int color, passflag_t passflag) {
         // check if we should still search
         if (!cfg_quiet && elapsed_centis - last_update > 250) {
             last_update = elapsed_centis;
+#ifdef SEARCH_INFO
             myprintf("%s\n", get_analysis(m_playouts.load()).c_str());
+#endif
         }
         keeprunning  = is_running();
         keeprunning &= !stop_thinking(elapsed_centis, time_for_move);
@@ -1022,16 +1036,21 @@ int UCTSearch::think(int color, passflag_t passflag) {
         return FastBoard::PASS;
     }
 
+#ifdef SEARCH_INFO
     // Display search info.
     myprintf("\n");
     dump_stats(m_rootstate, *m_root);
     //Training::record(m_network, m_rootstate, *m_root);
+#endif
 
     Time elapsed;
     int elapsed_centis = Time::timediff_centis(start, elapsed);
+#ifdef DEBUG_INFO
     myprintf("sizeof(UCTNode) is %d\n", sizeof(UCTNode));
     myprintf("sizeof(UCTNodePointer) is %d\n", sizeof(UCTNodePointer));
+#endif
     if (elapsed_centis+1 > 0) {
+#ifdef SEARCH_INFO
         myprintf("%7.2f visits, %u nodes, %u inflated, %d playouts, %.0f n/s, %.0f pos/s\n\n",
                  m_root->get_visits(),
             UCTNodePointer::m_nodes.load(), UCTNodePointer::m_inflated_nodes.load(),
@@ -1040,6 +1059,7 @@ int UCTSearch::think(int color, passflag_t passflag) {
                  (m_positions * 100.0) / (elapsed_centis+1));
 
         m_network.dump_stats();
+#endif
 #ifdef ACCUM_DEBUG
         myprintf("failed simulations: %u\n", failed_simulations.load());
         myprintf("max leaf vl multiplicity: %u\n", max_leaf_vl.load());
@@ -1053,6 +1073,7 @@ int UCTSearch::think(int color, passflag_t passflag) {
         //myprintf("%s", m_debug_string.c_str());
 #endif
     }
+
     int bestmove = get_best_move(passflag);
 
     // Save the explanation.
@@ -1105,6 +1126,7 @@ void UCTSearch::ponder() {
         output_analysis(m_rootstate, *m_root);
     }
 
+#ifdef SEARCH_INFO
     // Display search info.
     myprintf("\n");
     dump_stats(m_rootstate, *m_root);
@@ -1112,6 +1134,7 @@ void UCTSearch::ponder() {
     myprintf("\n%7.2f visits, %u nodes, %u inflated\n\n", m_root->get_visits(), 
         UCTNodePointer::m_nodes.load(), UCTNodePointer::m_inflated_nodes.load());
     m_network.dump_stats();
+#endif
 #ifdef ACCUM_DEBUG
     myprintf("failed simulations: %u\n", failed_simulations.load());
     myprintf("max leaf vl multiplicity: %u\n", max_leaf_vl.load());

@@ -229,8 +229,9 @@ void UCTNode::prepare_root_node(GameState& root_state) {
     // Remove illegal moves, so the root move list is correct.
     // This also removes a lot of special cases.
     kill_superkos(root_state);
-
+#ifdef SEARCH_INFO
     Utils::myprintf("root eval=%f\n", get_raw_eval(root_state.get_to_move()));
+#endif
     // get_best_child etc. can't work before this? should forbid them from acquiring reader ?
 
     if (cfg_noise) { // need writer privilege..
