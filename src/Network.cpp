@@ -88,10 +88,6 @@ using ConstEigenMatrixMap =
     Eigen::Map<const Eigen::Matrix<T, Eigen::Dynamic, Eigen::Dynamic>>;
 #endif
 
-// Symmetry helper
-static std::array<std::array<int, NUM_INTERSECTIONS>,
-                  Network::NUM_SYMMETRIES> symmetry_nn_idx_table;
-
 float Network::benchmark_time(int centiseconds) {
     const auto cpus = cfg_num_threads;
 
@@ -104,14 +100,14 @@ float Network::benchmark_time(int centiseconds) {
     // As a sanity run, try one run with self check.
     // Isn't enough to guarantee correctness but better than nothing,
     // plus for large nets self-check takes a while (1~3 eval per second)
-    get_output(&state, Ensemble::RANDOM_SYMMETRY, -1, false, true, true);
+    //get_output(&state, Ensemble::RANDOM_SYMMETRY, -1, false, true, true);
 
     const Time start;
     for (auto i = size_t{0}; i < cpus; i++) {
         tg.add_task([this, &runcount, start, centiseconds, state]() {
             while (true) {
                 runcount++;
-                get_output(&state, Ensemble::RANDOM_SYMMETRY, -1, false);
+                //get_output(&state, Ensemble::RANDOM_SYMMETRY, -1, false);
                 const Time end;
                 const auto elapsed = Time::timediff_centis(start, end);
                 if (elapsed >= centiseconds) {
@@ -138,7 +134,7 @@ void Network::benchmark(const GameState* const state, const int iterations) {
         tg.add_task([this, &runcount, iterations, state]() {
             while (runcount < iterations) {
                 runcount++;
-                get_output(state, Ensemble::RANDOM_SYMMETRY, -1, false);
+                //get_output(state, Ensemble::RANDOM_SYMMETRY, -1, false);
             }
         });
     }
@@ -701,6 +697,7 @@ std::vector<float> softmax(const std::vector<float>& input,
     return output;
 }
 
+/*
 bool Network::probe_cache(const GameState* const state,
                           Network::Netresult& result) {
     if (m_nncache.lookup(state->board.get_hash(), result)) {
@@ -731,7 +728,95 @@ bool Network::probe_cache(const GameState* const state,
     return false;
 }
 
-Network::Netresult Network::get_output(
+
+std::pair<Netresult_ptr, int> Network::probe_cache0(const GameState* const state) {
+
+    for (auto sym = 0; sym < Network::NUM_SYMMETRIES; ++sym) {
+        const auto hash = state->get_symmetry_hash(sym);
+        auto result = m_nncache.lookup_and_insert(hash, false);
+        if (result) {
+            return std::pair<Netresult_ptr, int>(result, sym);
+        }
+    }
+    return std::pair<Netresult_ptr, int>(nullptr, Network::IDENTITY_SYMMETRY);
+}
+*/
+
+void Network::get_output0(
+    int gnum, int i,
+    BackupData& bd,
+    const Ensemble ensemble,
+    int symmetry, const bool skip_cache) {
+
+    auto state = bd.state.get();
+    if (state->board.get_boardsize() != BOARD_SIZE) {
+        //return result_sym;
+    }
+
+    Netresult_ptr result;
+    bool ready = false;
+    bool first_visit = false;
+    if (!skip_cache) {
+        result = m_nncache.lookup_and_insert(bd, ready, first_visit);
+    }
+    else {
+        result = std::make_shared<NNCache::Entry>();
+        result->backup_obligations.emplace_back(std::move(bd));
+        first_visit = true;
+    }
+
+    if (ready) {
+        m_search->backup(bd, result);
+        return;
+    }
+    if (!first_visit) {
+        return;
+    }
+#ifdef ACCUM_DEBUG
+    ++(m_search->pending_netresults);
+    m_search->max_pending_netresults = std::max(m_search->max_pending_netresults.load(), 
+                                                m_search->pending_netresults.load());
+#endif
+    if (ensemble == DIRECT) {
+        assert(symmetry >= 0 && symmetry < NUM_SYMMETRIES);
+    }
+    else if (ensemble == AVERAGE) {
+        /*
+        for (auto sym = 0; sym < NUM_SYMMETRIES; ++sym) {
+            auto tmpresult = get_output_internal(state, sym);
+            result.winrate +=
+                tmpresult.winrate / static_cast<float>(NUM_SYMMETRIES);
+            result.policy_pass +=
+                tmpresult.policy_pass / static_cast<float>(NUM_SYMMETRIES);
+
+            for (auto idx = size_t{ 0 }; idx < NUM_INTERSECTIONS; idx++) {
+                result.policy[idx] +=
+                    tmpresult.policy[idx] / static_cast<float>(NUM_SYMMETRIES);
+            }
+        }
+        */
+    }
+    else {
+        assert(ensemble == RANDOM_SYMMETRY);
+        assert(symmetry == -1);
+        symmetry = Random::get_Rng().randfix<NUM_SYMMETRIES>();
+#ifdef USE_OPENCL_SELFCHECK
+        // Both implementations are available, self-check the OpenCL driver by
+        // running both with a probability of 1/2000.
+        // selfcheck is done here because this is the only place NN
+        // evaluation is done on actual gameplay.
+        if (m_forward_cpu != nullptr
+            && Random::get_Rng().randfix<SELFCHECK_PROBABILITY>() == 0) {
+            auto result_ref = get_output_internal(state, rand_sym, true);
+            compare_net_outputs(result, result_ref);
+        }
+#endif
+    }
+    auto tomove = state->get_to_move();
+    m_forward->forward0(gnum, i, gather_features(state, symmetry), !tomove, tomove, tomove, symmetry, result);
+}
+
+/*Network::Netresult Network::get_output(
     const GameState* const state, const Ensemble ensemble, const int symmetry,
     const bool read_cache, const bool write_cache, const bool force_selfcheck) {
     Netresult result;
@@ -739,7 +824,8 @@ Network::Netresult Network::get_output(
         return result;
     }
 
-    if (read_cache) {
+
+    /*if (read_cache) {
         // See if we already have this in the cache.
         if (probe_cache(state, result)) {
             return result;
@@ -791,14 +877,67 @@ Network::Netresult Network::get_output(
         }
     }
 
-    if (write_cache) {
+    /*if (write_cache) {
         // Insert result into cache.
         m_nncache.insert(state->board.get_hash(), result);
     }
 
     return result;
+}*/
+
+void Network::process_output(
+    std::vector<float>& policy_data,
+    std::vector<float>& value_data,
+    const int tomove,
+    const int symmetry,
+    Netresult_ptr result) {
+    // Get the moves
+    batchnorm<NUM_INTERSECTIONS>(OUTPUTS_POLICY, policy_data,
+        m_bn_pol_w1.data(), m_bn_pol_w2.data());
+    const auto policy_out =
+        innerproduct<OUTPUTS_POLICY * NUM_INTERSECTIONS, POTENTIAL_MOVES, false>(
+            policy_data, m_ip_pol_w, m_ip_pol_b);
+    const auto outputs = softmax(policy_out, cfg_softmax_temp);
+
+    // Now get the value
+    batchnorm<NUM_INTERSECTIONS>(OUTPUTS_VALUE, value_data,
+        m_bn_val_w1.data(), m_bn_val_w2.data());
+    const auto winrate_data =
+        innerproduct<OUTPUTS_VALUE * NUM_INTERSECTIONS, VALUE_LAYER, true>(
+            value_data, m_ip1_val_w, m_ip1_val_b);
+    const auto winrate_out =
+        innerproduct<VALUE_LAYER, 1, false>(winrate_data, m_ip2_val_w, m_ip2_val_b);
+
+    // Map TanH output range [-1..1] to [0..1] range
+    auto winrate = (1.0f + std::tanh(winrate_out[0])) / 2.0f;
+
+    for (auto idx = size_t{ 0 }; idx < NUM_INTERSECTIONS; idx++) {
+        const auto sym_idx = symmetry_nn_idx_table[symmetry][idx];
+        result->result.policy[sym_idx] = outputs[idx];
+    }
+
+    // v2 format (ELF Open Go) returns black value, not stm
+    if (m_value_head_not_stm) {
+        if (tomove == FastBoard::WHITE) {
+            winrate = 1.0f - winrate;
+        }
+    }
+
+    result->result.policy_pass = outputs[NUM_INTERSECTIONS];
+    result->result.winrate = winrate;
+    while (result->ready.test_and_set());
+    auto obligations = std::move(result->backup_obligations);
+    for (auto& bd : obligations) {
+        m_search->backup(bd, result);
+    }
+#ifdef ACCUM_DEBUG
+    --(m_search->pending_netresults);
+    m_search->min_pending_netresults = std::min(m_search->min_pending_netresults.load(),
+                                                m_search->pending_netresults.load());
+#endif
 }
 
+/*
 Network::Netresult Network::get_output_internal(
     const GameState* const state, const int symmetry, bool selfcheck) {
     assert(symmetry >= 0 && symmetry < NUM_SYMMETRIES);
@@ -850,7 +989,7 @@ Network::Netresult Network::get_output_internal(
     result.winrate = winrate;
 
     return result;
-}
+}*/
 
 void Network::show_heatmap(const FastState* const state,
                            const Netresult& result,
@@ -906,53 +1045,48 @@ void Network::show_heatmap(const FastState* const state,
 }
 
 void Network::fill_input_plane_pair(const FullBoard& board,
-                                    std::vector<float>::iterator black,
-                                    std::vector<float>::iterator white,
+                                    std::vector<uint8_t>& features,
+                                    int black, int white,
                                     const int symmetry) {
     for (auto idx = 0; idx < NUM_INTERSECTIONS; idx++) {
         const auto sym_idx = symmetry_nn_idx_table[symmetry][idx];
         const auto x = sym_idx % BOARD_SIZE;
         const auto y = sym_idx / BOARD_SIZE;
         const auto color = board.get_state(x, y);
+
         if (color == FastBoard::BLACK) {
-            black[idx] = float(true);
+            auto i = black + idx;
+            features[i/8] |= (1 << (i%8));
         } else if (color == FastBoard::WHITE) {
-            white[idx] = float(true);
+            auto i = white + idx;
+            features[i/8] |= (1 << (i%8));
         }
     }
 }
 
-std::vector<float> Network::gather_features(const GameState* const state,
-                                            const int symmetry) {
+std::vector<uint8_t> Network::gather_features(const GameState* const state,
+    const int symmetry) {
     assert(symmetry >= 0 && symmetry < NUM_SYMMETRIES);
-    auto input_data = std::vector<float>(INPUT_CHANNELS * NUM_INTERSECTIONS);
+    std::vector<uint8_t> features(PAC_FEA_LEN, 0);
 
     const auto to_move = state->get_to_move();
     const auto blacks_move = to_move == FastBoard::BLACK;
 
-    const auto black_it = blacks_move ?
-                          begin(input_data) :
-                          begin(input_data) + INPUT_MOVES * NUM_INTERSECTIONS;
-    const auto white_it = blacks_move ?
-                          begin(input_data) + INPUT_MOVES * NUM_INTERSECTIONS :
-                          begin(input_data);
-    const auto to_move_it = blacks_move ?
-        begin(input_data) + 2 * INPUT_MOVES * NUM_INTERSECTIONS :
-        begin(input_data) + (2 * INPUT_MOVES + 1) * NUM_INTERSECTIONS;
+    const auto black_it = blacks_move ? 0 : INPUT_MOVES * NUM_INTERSECTIONS;
+    const auto white_it = blacks_move ? INPUT_MOVES * NUM_INTERSECTIONS : 0;
 
     const auto moves = std::min<size_t>(state->get_movenum() + 1, INPUT_MOVES);
+
     // Go back in time, fill history boards
-    for (auto h = size_t{0}; h < moves; h++) {
+    for (auto h = size_t{ 0 }; h < moves; h++) {
         // collect white, black occupation planes
         fill_input_plane_pair(state->get_past_board(h),
-                              black_it + h * NUM_INTERSECTIONS,
-                              white_it + h * NUM_INTERSECTIONS,
-                              symmetry);
+            features,
+            black_it + h * NUM_INTERSECTIONS,
+            white_it + h * NUM_INTERSECTIONS,
+            symmetry);
     }
-
-    std::fill(to_move_it, to_move_it + NUM_INTERSECTIONS, float(true));
-
-    return input_data;
+    return features;
 }
 
 std::pair<int, int> Network::get_symmetry(const std::pair<int, int>& vertex,
@@ -1032,4 +1166,8 @@ size_t Network::get_estimated_cache_size() {
 
 void Network::nncache_resize(int max_count) {
     return m_nncache.resize(max_count);
+}
+
+void Network::nncache_clear() {
+    m_nncache.clear();
 }

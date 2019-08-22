@@ -33,10 +33,29 @@
 #include "config.h"
 
 #include <array>
+#include <atomic>
 #include <deque>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
+#include <vector>
+
+class UCTNode;
+class GameState;
+struct BackupData {
+    struct NodeFactor {
+        UCTNode* node;
+        float factor;
+        NodeFactor(UCTNode* node, float factor) : node(node), factor(factor) {}
+    };
+    float eval{ -1.0f };
+    std::vector<NodeFactor> path;
+    int symmetry;
+    bool branch_node;
+    std::unique_ptr<GameState> state;
+    std::atomic<unsigned>* pending_counter;
+    //int multiplicity{1};
+};
 
 class NNCache {
 public:
@@ -45,7 +64,7 @@ public:
     static constexpr int MAX_CACHE_COUNT = 150'000;
 
     // Minimum size of the cache in number of items.
-    static constexpr int MIN_CACHE_COUNT = 6'000;
+    static constexpr int MIN_CACHE_COUNT = 1;
 
     struct Netresult {
         // 19x19 board positions
@@ -57,15 +76,10 @@ public:
         // winrate
         float winrate;
 
-        Netresult() : policy_pass(0.0f), winrate(0.0f) {
-            policy.fill(0.0f);
+        Netresult() : policy_pass(0.0f), winrate(-1.0f) {
+            //policy.fill(0.0f);
         }
     };
-
-    static constexpr size_t ENTRY_SIZE =
-          sizeof(Netresult)
-        + sizeof(std::uint64_t)
-        + sizeof(std::unique_ptr<Netresult>);
 
     NNCache(int size = MAX_CACHE_COUNT);  // ~ 208MiB
 
@@ -74,44 +88,100 @@ public:
 
     // Resize NNCache
     void resize(int size);
-
-    // Try and find an existing entry.
-    bool lookup(std::uint64_t hash, Netresult & result);
-
-    // Insert a new entry.
-    void insert(std::uint64_t hash,
-                const Netresult& result);
+    void clear();
 
     // Return the hit rate ratio.
     std::pair<int, int> hit_rate() const {
         return {m_hits, m_lookups};
     }
 
+    void clear_stats();
     void dump_stats();
 
     // Return the estimated memory consumption of the cache.
     size_t get_estimated_size();
-private:
-
-    std::mutex m_mutex;
-
-    size_t m_size;
-
-    // Statistics
-    int m_hits{0};
-    int m_lookups{0};
-    int m_inserts{0};
 
     struct Entry {
-        Entry(const Netresult& r)
-            : result(r) {}
+        //Entry(const Netresult& r) : result(r) {}
+        std::atomic_flag ready{ ATOMIC_FLAG_INIT };
         Netresult result;  // ~ 1.4KiB
+        std::vector<BackupData> backup_obligations;
     };
 
-    // Map from hash to {features, result}
-    std::unordered_map<std::uint64_t, std::unique_ptr<const Entry>> m_cache;
-    // Order entries were added to the map.
-    std::deque<size_t> m_order;
+    static constexpr size_t ENTRY_SIZE =
+        sizeof(Entry)
+        + sizeof(std::uint64_t)
+        + sizeof(std::shared_ptr<Entry>);
+
+    std::shared_ptr<NNCache::Entry> lookup_and_insert(BackupData& bd, bool& ready, bool& first_visit);
+private:
+    
+    size_t m_size;
+    unsigned m_parts;
+
+    // Statistics
+    std::atomic<unsigned> m_hits{0};
+    std::atomic<unsigned> m_lookups{0};
+    std::atomic<unsigned> m_inserts{0};
+
+    class CachePartition {
+    private:
+        // Map from hash to {features, result}
+        std::unordered_map<std::uint64_t, std::shared_ptr<Entry>> m_cache;
+        // Order entries were added to the map.
+        std::deque<size_t> m_order;
+        std::mutex m_mutex;
+        //std::atomic<uint8_t> m_lock;
+    public:
+        size_t get_size() {
+            return m_cache.size();
+        }
+        void resize(int size) {
+            std::lock_guard<std::mutex> lk(m_mutex);
+            m_cache.reserve(size);
+            while (m_order.size() > size) {
+                m_cache.erase(m_order.front());
+                m_order.pop_front();
+            }
+        }
+        void clear() {
+            std::lock_guard<std::mutex> lk(m_mutex);
+            m_cache.clear();
+            m_order.clear();
+        }
+        std::shared_ptr<NNCache::Entry> lookup(std::uint64_t hash, BackupData& bd, bool& ready) {
+            std::lock_guard<std::mutex> lk(m_mutex);
+            auto iter = m_cache.find(hash);
+            if (iter != m_cache.end()) {
+                auto result = iter->second;
+                if (result->ready.test_and_set())
+                    ready = true;
+                else {
+                    result->backup_obligations.emplace_back(std::move(bd));
+                    result->ready.clear();
+                }
+                return result;
+            }
+            return nullptr;
+        }
+        std::shared_ptr<NNCache::Entry> insert(std::uint64_t hash, size_t sz, BackupData& bd) {
+            std::lock_guard<std::mutex> lk(m_mutex);
+            // If the cache is too large, remove the oldest entry.
+            if (m_order.size() >= sz) {
+                m_cache.erase(m_order.front());
+                m_order.pop_front();
+            }
+            auto result = std::make_shared<Entry>();
+            result->backup_obligations.emplace_back(std::move(bd));
+
+            m_cache.emplace(hash, result);
+            m_order.push_back(hash);
+            return result;
+        }
+    };
+    std::vector<CachePartition*> m_partitions;
 };
+
+using Netresult_ptr = std::shared_ptr<NNCache::Entry>;
 
 #endif

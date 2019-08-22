@@ -54,7 +54,6 @@
 #include "SMP.h"
 #endif
 
-
 // Winograd filter transformation changes 3x3 filters to M + 3 - 1
 constexpr auto WINOGRAD_M = 4;
 constexpr auto WINOGRAD_ALPHA = WINOGRAD_M + 3 - 1;
@@ -74,14 +73,21 @@ public:
     using PolicyVertexPair = std::pair<float,int>;
     using Netresult = NNCache::Netresult;
 
-    Netresult get_output(const GameState* const state,
-                         const Ensemble ensemble,
-                         const int symmetry = -1,
-                         const bool read_cache = true,
-                         const bool write_cache = true,
-                         const bool force_selfcheck = false);
+    /*Netresult get_output(const GameState* const state,
+        const Ensemble ensemble,
+        const int symmetry = -1,
+        const bool read_cache = true,
+        const bool write_cache = true,
+        const bool force_selfcheck = false);*/
+    void get_output0(
+        int gnum, int i,
+        BackupData& bd,
+        const Ensemble ensemble,
+        int symmetry = -1,
+        const bool skip_cache = false);
 
     static constexpr auto INPUT_MOVES = 8;
+    static constexpr auto PAC_FEA_LEN = 2 * INPUT_MOVES * NUM_INTERSECTIONS / 8; // packed features length
     static constexpr auto INPUT_CHANNELS = 2 * INPUT_MOVES + 2;
     static constexpr auto OUTPUTS_POLICY = 2;
     static constexpr auto OUTPUTS_VALUE = 1;
@@ -95,8 +101,8 @@ public:
     static void show_heatmap(const FastState * const state,
                              const Netresult & netres, const bool topmoves);
 
-    static std::vector<float> gather_features(const GameState* const state,
-                                              const int symmetry);
+    std::vector<uint8_t> gather_features(const GameState* const state, const int symmetry);
+
     static std::pair<int, int> get_symmetry(const std::pair<int, int>& vertex,
                                             const int symmetry,
                                             const int board_size = BOARD_SIZE);
@@ -105,7 +111,27 @@ public:
     size_t get_estimated_cache_size();
     void nncache_resize(int max_count);
 
+    void clear_stats() { m_forward->clear_stats(); m_nncache.clear_stats(); }
+    void dump_stats() { m_forward->dump_stats(); m_nncache.dump_stats(); }
+    void nncache_clear();
+
+    //int get_max_size() { return m_forward->m_max_queue_size.load(); }
+    void set_search(UCTSearch* search) { m_search = m_forward->m_search = search; m_forward->m_network = this; }
+    void destruct() { m_forward = nullptr; }
+    std::mutex& get_queue_mutex() { return m_forward->m_mutex; }
+    void notify() { m_forward->m_cv0.notify_all(); }
+    void process_output(std::vector<float>& policy_data,
+        std::vector<float>& value_data,
+        const int tomove,
+        const int symmetry,
+        Netresult_ptr result);
+
+    // Symmetry helper
+    static std::array<std::array<int, NUM_INTERSECTIONS>,
+        Network::NUM_SYMMETRIES> symmetry_nn_idx_table;
+
 private:
+    UCTSearch * m_search;
     std::pair<int, int> load_v1_network(std::istream& wtfile);
     std::pair<int, int> load_network_file(const std::string& filename);
 
@@ -129,13 +155,16 @@ private:
     static void winograd_sgemm(const std::vector<float>& U,
                                const std::vector<float>& V,
                                std::vector<float>& M, const int C, const int K);
-    Netresult get_output_internal(const GameState* const state,
-                                  const int symmetry, bool selfcheck = false);
+    //Netresult get_output_internal(const GameState* const state,
+        //const int symmetry, bool selfcheck = false);
+    //Netresult_ptr get_output_internal0(const GameState* const state,
+    //                                   const int symmetry, bool selfcheck = false);
     static void fill_input_plane_pair(const FullBoard& board,
-                                      std::vector<float>::iterator black,
-                                      std::vector<float>::iterator white,
+                                      std::vector<uint8_t>& features,
+                                      int black, int white,
                                       const int symmetry);
-    bool probe_cache(const GameState* const state, Network::Netresult& result);
+    // bool probe_cache(const GameState* const state, Network::Netresult& result);
+    std::pair<Netresult_ptr, int> probe_cache0(const GameState* const state);
     std::unique_ptr<ForwardPipe>&& init_net(int channels,
                                             std::unique_ptr<ForwardPipe>&& pipe);
 #ifdef USE_HALF

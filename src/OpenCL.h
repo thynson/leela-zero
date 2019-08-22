@@ -36,17 +36,21 @@
 #define CL_HPP_TARGET_OPENCL_VERSION    120
 #define CL_HPP_ENABLE_EXCEPTIONS
 #include <CL/cl2.hpp>
+#include <atomic>
 #include <cstddef>
 #include <memory>
 #include <string>
 #include <vector>
 #include <mutex>
+#include <condition_variable>
 #include <cassert>
 
+#include "NNCache.h"
 #include "Tuner.h"
 
 template <typename net_t> class OpenCL;
 template <typename net_t> class OpenCL_Network;
+template <typename net_t> class OpenCLScheduler;
 
 class Layer {
     template <typename> friend class OpenCL_Network;
@@ -66,12 +70,16 @@ class OpenCLContext {
 private:
     bool m_is_initialized{false};
     cl::CommandQueue m_commandqueue;
+    cl::Kernel m_features_kernel;
+    cl::Kernel m_btm_kernel;
     cl::Kernel m_convolve1_kernel;
     cl::Kernel m_merge_kernel;
     cl::Kernel m_in_transform_kernel;
     cl::Kernel m_sgemm_kernel;
     cl::Kernel m_out_transform_bn_kernel;
     cl::Kernel m_out_transform_bn_in_kernel;
+    cl::Buffer m_inBufferFea;
+    cl::Buffer m_inBufferBtm;
     cl::Buffer m_inBuffer;
     cl::Buffer m_inBuffer2;
     cl::Buffer m_VBuffer;
@@ -84,6 +92,7 @@ private:
 template <typename net_t>
 class OpenCL_Network {
 public:
+    
     OpenCL_Network(OpenCL<net_t> & opencl) : m_opencl(opencl) {}
     OpenCL<net_t> & getOpenCL() {
         return m_opencl;
@@ -145,10 +154,12 @@ public:
         return m_layers.size();
     }
 
-    void forward(const std::vector<float>& input,
+    void forward(const uint8_t* input,
+            const net_t* btm,
             std::vector<float>& output_pol,
             std::vector<float>& output_val,
             OpenCLContext & opencl_context,
+            OpenCLScheduler<net_t>& scheduler,
             const int batch_size = 1);
 
 private:
@@ -185,6 +196,7 @@ private:
     // because queue.finish() is a busy wait and having a lot of threads
     // waiting here is counterproductive CPU-wise.  At least std::mutex
     // isn't busy wait so it should be better.
+    std::mutex m_enqueue_mutex;
     std::mutex m_queue_finish_mutex;
     std::vector<Layer> m_layers;
 };
@@ -193,23 +205,48 @@ template <typename net_t>
 class OpenCL {
     friend class OpenCL_Network<net_t>;
     friend class Tuner<net_t>;
+    friend class OpenCLScheduler<net_t>;
 public:
     OpenCL(int gpu, bool silent = false);
 
-    void initialize(const int channels, size_t batch_size = 1);
+    void initialize(const int channels, int num_workers, int batch_size = 1);
     void ensure_context_initialized(OpenCLContext & opencl_context);
     std::string get_device_name();
     bool has_fp16_compute();
     bool has_tensor_cores();
 
     std::vector<size_t> get_sgemm_tuners();
-
+    
     cl::Device m_device;
     cl::Context m_context;
 private:
     void process_tuners(std::string tuners);
 
-    size_t m_batch_size = 1;
+    int m_batch_size = 1;
+    int m_num_workers;
+
+    
+    struct BackupEntry {
+        int tomove;
+        int symmetry;
+        Netresult_ptr result;
+    };
+
+    std::atomic<int> m_occupied{0};
+    std::atomic<int> idle_count{0};
+    std::atomic<int> failures{0};
+    std::atomic<int>* rounds;
+
+    //std::atomic_flag* buffer_flag;
+    std::atomic<int>* batch_stats;
+    std::vector<uint8_t*> inputs;
+    std::vector<net_t*> btms;
+    std::vector<BackupEntry*> backup_entries; // one-one correspond to inputs
+    //std::atomic<int>* writing_location;
+    std::atomic<int>* written_location;
+    //std::mutex mutex;
+    //std::condition_variable* cv;
+
     cl::Program m_program;
     std::string m_cl_args;
 

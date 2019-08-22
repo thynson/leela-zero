@@ -188,6 +188,37 @@ R"(
   INLINE_FUNC int GetGroupID0() { return get_group_id(0); }
 #endif
 
+
+
+__kernel void decode_features(__global unsigned char * restrict in, __global net_t * restrict out, const int in_stride, const int out_stride) {
+    const int pos = get_global_id(0);
+    const int seg = get_global_id(1);
+    const int pos_o = pos * out_stride + seg * 8, pos_i = pos * in_stride + seg;
+    for (int i = 0; i < 8; ++i) {
+        int pos = pos_o + i;
+        if (in[pos_i] & (1 << i)) vstore_net_t(1.0f, pos, out);
+        else vstore_net_t(0.0f, pos, out);
+    }
+}
+
+__kernel void fill_btm(__global net_t * restrict in, __global net_t * restrict out, const int offset, const int span, const int stride) {
+    const int pos = get_global_id(0);
+    float btm = vload_net_t(pos, in), wtm = 1.0f - btm;
+    int i = pos * stride + offset;
+    while (i < pos * stride + offset + span) vstore_net_t(btm, i++, out);
+    while (i < (pos + 1) * stride) vstore_net_t(wtm, i++, out);
+    /*if (pos == 1) {
+        for (int k = 18; k < 36; ++k) {
+            for (int j = k*361; j < (k+1)*361 - 1; j += 2) {
+            printf("%d %d ", (int)vload_net_t(j, out), (int)vload_net_t(j+1, out));
+            }
+            printf("%d ", (int)vload_net_t((k+1)*361-1,out));
+            printf("end of %d th plane:", k);
+        }
+        printf("the end\n");
+    }*/
+}
+
 // =================================================================================================
 
 // End of the C++11 raw string literal

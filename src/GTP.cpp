@@ -59,8 +59,7 @@ using namespace Utils;
 // Configuration flags
 bool cfg_gtp_mode;
 bool cfg_allow_pondering;
-unsigned int cfg_num_threads;
-unsigned int cfg_batch_size;
+int cfg_num_threads;
 int cfg_max_playouts;
 int cfg_max_visits;
 size_t cfg_max_memory;
@@ -77,8 +76,17 @@ std::uint64_t cfg_rng_seed;
 bool cfg_dumbpass;
 #ifdef USE_OPENCL
 std::vector<int> cfg_gpus;
+std::vector<int> cfg_workers;
 bool cfg_sgemm_exhaustive;
 bool cfg_tune_only;
+std::vector<int> cfg_batch_size;
+bool cfg_frac_backup;
+float cfg_backup_exp;
+unsigned cfg_nncache_exp;
+int cfg_superior_side;
+float cfg_contempt_factor;
+bool cfg_vl_in_parentvisits;
+float cfg_uct_temp;
 #ifdef USE_HALF
 precision_t cfg_precision;
 #endif
@@ -316,11 +324,8 @@ void GTP::initialize(std::unique_ptr<Network>&& net) {
 void GTP::setup_default_parameters() {
     cfg_gtp_mode = false;
     cfg_allow_pondering = true;
-
     // we will re-calculate this on Leela.cpp
     cfg_num_threads = 1;
-    // we will re-calculate this on Leela.cpp
-    cfg_batch_size = 1;
 
     cfg_max_memory = UCTSearch::DEFAULT_MAX_MEMORY;
     cfg_max_playouts = UCTSearch::UNLIMITED_PLAYOUTS;
@@ -333,11 +338,21 @@ void GTP::setup_default_parameters() {
     cfg_weightsfile = leelaz_file("best-network");
 #ifdef USE_OPENCL
     cfg_gpus = { };
+    cfg_workers = { };
     cfg_sgemm_exhaustive = false;
     cfg_tune_only = false;
 
+    // we will re-calculate this on Leela.cpp
+    cfg_batch_size = { };
+    cfg_frac_backup = true;
+    cfg_backup_exp = 1.0f;
+    cfg_nncache_exp = 4;
+    cfg_superior_side = FastBoard::INVAL;
+    cfg_contempt_factor = 1.0f;
+    cfg_vl_in_parentvisits = true;
+    cfg_uct_temp = 0.0;
 #ifdef USE_HALF
-    cfg_precision = precision_t::AUTO;
+    cfg_precision = precision_t::HALF;
 #endif
 #endif
     cfg_puct = 0.5f;
@@ -411,6 +426,7 @@ const std::string GTP::s_commands[] = {
     "lz-genmove_analyze",
     "lz-memory_report",
     "lz-setoption",
+    "stop",
     "gomill-explain_last_move",
     ""
 };
@@ -514,10 +530,13 @@ void GTP::execute(GameState & game, const std::string& xinput) {
     }
 
     /* process commands */
-    if (command == "protocol_version") {
+    if (command == "stop") {
+        search->m_run = false;
+    } else if (command == "protocol_version") {
         gtp_printf(id, "%d", GTP_VERSION);
         return;
     } else if (command == "name") {
+        search->m_run = false;
         gtp_printf(id, PROGRAM_NAME);
         return;
     } else if (command == "version") {
@@ -574,7 +593,8 @@ void GTP::execute(GameState & game, const std::string& xinput) {
     } else if (command.find("clear_board") == 0) {
         Training::clear_training();
         game.reset_game();
-        search = std::make_unique<UCTSearch>(game, *s_network);
+        //s_network->nncache_clear();
+        //search = std::make_unique<UCTSearch>(game, *s_network);
         assert(UCTNodePointer::get_tree_size() == 0);
         gtp_printf(id, "");
         return;
@@ -668,12 +688,12 @@ void GTP::execute(GameState & game, const std::string& xinput) {
             }
         }
 
-        if (cfg_allow_pondering) {
+        if (cfg_allow_pondering && !game.has_resigned()) {
             // now start pondering
-            if (!game.has_resigned()) {
-                // Outputs winrate and pvs through gtp for lz-genmove_analyze
-                search->ponder();
-            }
+            // Outputs winrate and pvs through gtp for lz-genmove_analyze
+            search->ponder();
+        } else {
+            search->m_run = false;
         }
         if (analysis_output) {
             // Terminate multi-line response
@@ -731,11 +751,11 @@ void GTP::execute(GameState & game, const std::string& xinput) {
                 std::string vertex = game.move_to_text(move);
                 gtp_printf(id, "%s", vertex.c_str());
             }
-            if (cfg_allow_pondering) {
-                // now start pondering
-                if (!game.has_resigned()) {
-                    search->ponder();
-                }
+            if (cfg_allow_pondering && !game.has_resigned()) {
+                search->ponder();
+            }
+            else {
+                search->m_run = false;
             }
         } else {
             gtp_fail_printf(id, "syntax not understood");
@@ -817,12 +837,13 @@ void GTP::execute(GameState & game, const std::string& xinput) {
 
             gtp_printf(id, "");
 
-            if (cfg_allow_pondering) {
+            if (cfg_allow_pondering && !game.has_resigned()) {
                 // KGS sends this after our move
                 // now start pondering
-                if (!game.has_resigned()) {
-                    search->ponder();
-                }
+                search->ponder();
+            }
+            else {
+                search->m_run = false;
             }
         } else {
             gtp_fail_printf(id, "syntax not understood");
@@ -833,13 +854,13 @@ void GTP::execute(GameState & game, const std::string& xinput) {
             int move = search->think(game.get_to_move(), UCTSearch::NORMAL);
             game.play_move(move);
             game.display_state();
-
         } while (game.get_passes() < 2 && !game.has_resigned());
-
+        search->m_run = false;
         return;
     } else if (command.find("go") == 0 && command.size() < 6) {
         int move = search->think(game.get_to_move());
         game.play_move(move);
+        search->m_run = false;
 
         std::string vertex = game.move_to_text(move);
         myprintf("%s\n", vertex.c_str());
@@ -853,7 +874,7 @@ void GTP::execute(GameState & game, const std::string& xinput) {
         cmdstream >> symmetry;
 
         Network::Netresult vec;
-        if (cmdstream.fail()) {
+        /*if (cmdstream.fail()) {
             // Default = DIRECT with no symmetric change
             vec = s_network->get_output(
                 &game, Network::Ensemble::DIRECT,
@@ -874,7 +895,7 @@ void GTP::execute(GameState & game, const std::string& xinput) {
 
         if (symmetry != "all") {
             Network::show_heatmap(&game, vec, false);
-        }
+        }*/
 
         gtp_printf(id, "");
         return;
@@ -991,6 +1012,7 @@ void GTP::execute(GameState & game, const std::string& xinput) {
         } catch (const std::exception&) {
             gtp_fail_printf(id, "cannot load file");
         }
+        s_network->nncache_clear();
         return;
     } else if (command.find("kgs-chat") == 0) {
         // kgs-chat (game|private) Name Message

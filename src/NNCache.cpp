@@ -40,49 +40,58 @@ const int NNCache::MAX_CACHE_COUNT;
 const int NNCache::MIN_CACHE_COUNT;
 const size_t NNCache::ENTRY_SIZE;
 
-NNCache::NNCache(int size) : m_size(size) {}
-
-bool NNCache::lookup(std::uint64_t hash, Netresult & result) {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    ++m_lookups;
-
-    auto iter = m_cache.find(hash);
-    if (iter == m_cache.end()) {
-        return false;  // Not found.
+NNCache::NNCache(int size) {
+    m_parts = 1 << cfg_nncache_exp;
+    m_partitions.resize(m_parts--);
+    for (auto& p : m_partitions) {
+        p = new CachePartition();
     }
-
-    const auto& entry = iter->second;
-
-    // Found it.
-    ++m_hits;
-    result = entry->result;
-    return true;
+    resize(size);
 }
 
-void NNCache::insert(std::uint64_t hash,
-                     const Netresult& result) {
-    std::lock_guard<std::mutex> lock(m_mutex);
-
-    if (m_cache.find(hash) != m_cache.end()) {
-        return;  // Already in the cache.
+std::shared_ptr<NNCache::Entry> NNCache::lookup_and_insert(BackupData& bd, bool& ready, bool& first_visit) {
+    auto state = bd.state.get();
+    const auto hash = state->board.get_hash();
+    ++m_lookups;
+    bd.symmetry = 0;
+    auto result = m_partitions[hash & m_parts]->lookup(hash, bd, ready);
+    if (result) {
+        ++m_hits;
+        return result;
     }
-
-    m_cache.emplace(hash, std::make_unique<Entry>(result));
-    m_order.push_back(hash);
+    // If we are not generating a self-play game, try to find
+    // symmetries if we are in the early opening.
+    if (!cfg_noise && !cfg_random_cnt
+        && state->get_movenum()
+        < (state->get_timecontrol().opening_moves(BOARD_SIZE) / 2)) {
+        // See if we already have this in the cache.
+        for (auto sym = 1; sym < Network::NUM_SYMMETRIES; ++sym) {
+            ++m_lookups;
+            const auto hash = state->get_symmetry_hash(sym);
+            bd.symmetry = sym;
+            auto result = m_partitions[hash & m_parts]->lookup(hash, bd, ready);
+            if (result) {
+                ++m_hits;
+                return result;
+            }
+        }
+    }
+    bd.symmetry = Network::IDENTITY_SYMMETRY; // = 0
     ++m_inserts;
-
-    // If the cache is too large, remove the oldest entry.
-    if (m_order.size() > m_size) {
-        m_cache.erase(m_order.front());
-        m_order.pop_front();
-    }
+    first_visit = true;
+    return m_partitions[hash & m_parts]->insert(hash, m_size, bd);
 }
 
 void NNCache::resize(int size) {
-    m_size = size;
-    while (m_order.size() > m_size) {
-        m_cache.erase(m_order.front());
-        m_order.pop_front();
+    m_size = size / m_partitions.size();
+    for (auto& p : m_partitions) {
+        p->resize(m_size);
+    }
+}
+
+void NNCache::clear() {
+    for (auto& p : m_partitions) {
+        p->clear();
     }
 }
 
@@ -99,13 +108,26 @@ void NNCache::set_size_from_playouts(int max_playouts) {
     resize(max_size);
 }
 
+void NNCache::clear_stats() {
+    m_hits = m_lookups = m_inserts = 0;
+}
+
 void NNCache::dump_stats() {
+    auto hits = m_hits.load(), lookups = m_lookups.load();
     Utils::myprintf(
-        "NNCache: %d/%d hits/lookups = %.1f%% hitrate, %d inserts, %u size\n",
-        m_hits, m_lookups, 100. * m_hits / (m_lookups + 1),
-        m_inserts, m_cache.size());
+        "NNCache: %d/%d hits/lookups = %.1f%% hitrate, %d inserts, size: ",
+        hits, lookups, 100. * hits / (lookups + 1),
+        m_inserts.load());
+    for (auto& p : m_partitions) {
+        Utils::myprintf("%u, ", p->get_size());
+    }
+    Utils::myprintf("\n");
 }
 
 size_t NNCache::get_estimated_size() {
-    return m_order.size() * NNCache::ENTRY_SIZE;
+    unsigned cnt = 0;
+    for (auto& p : m_partitions) {
+        cnt += p->get_size();
+    }
+    return cnt * NNCache::ENTRY_SIZE;
 }

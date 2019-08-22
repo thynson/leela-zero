@@ -42,7 +42,15 @@ public:
     virtual void forward(const std::vector<float>& input,
                          std::vector<float>& output_pol,
                          std::vector<float>& output_val);
-
+    virtual void forward0(int gnum, int i,
+                          const std::vector<uint8_t>& input,
+                          const float btm,
+                          const float wtm,
+                          const int tomove,
+                          const int symmetry,
+                          Netresult_ptr result);
+    virtual void clear_stats();
+    virtual void dump_stats();
     virtual void push_weights(unsigned int filter_size,
                               unsigned int channels,
                               unsigned int outputs,
