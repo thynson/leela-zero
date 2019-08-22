@@ -307,7 +307,7 @@ int TimeControl::get_moves_expected(int boardsize, size_t movenum) const {
     if (cfg_timemanage != TimeManagement::OFF) {
         // We will take early exits with time management on, so
         // it's OK to make our base time bigger.
-        board_div = 9;
+        board_div = 12;
     }
 
     // Note this is constant as we play, so it's fair
