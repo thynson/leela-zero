@@ -707,7 +707,7 @@ bool UCTSearch::have_alternate_moves(int elapsed_centis, int time_for_move) {
     // That comes at the cost of some playing strength as she now cannot
     // think ahead about her next moves in the remaining time.
     auto tc = m_rootstate.get_timecontrol();
-    if (!tc.should_accumulate_time(my_color) ||
+    if (!tc.should_accumulate_time(my_color, time_for_move) ||
         m_maxplayouts < UCTSearch::UNLIMITED_PLAYOUTS) {
         if (cfg_timemanage != TimeManagement::FAST) {
             return true;
