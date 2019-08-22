@@ -142,9 +142,12 @@ void GameState::start_clock(int color) {
 }
 
 void GameState::display_state() {
+#ifdef DISPLAY_BOARD
     FastState::display_state();
-
+#endif
+#ifdef DISPLAY_TIME
     m_timecontrol.display_times();
+#endif
 }
 
 int GameState::who_resigned() const {
