@@ -783,7 +783,11 @@ void GTP::execute(GameState & game, const std::string& xinput) {
 
         if (!cmdstream.fail()) {
             // convert to centiseconds and set
-            game.set_timecontrol(maintime * 100, byotime * 100, byostones, 0);
+            if (!game.game_started()) {
+                game.set_timecontrol(maintime * 100, byotime * 100, byostones, 0);
+            } else {
+                myprintf("time_settings command is not supported after game started, ignored");
+            }
 
             gtp_printf(id, "");
         } else {
