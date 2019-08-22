@@ -65,7 +65,7 @@ public:
     void play_move(int color, int vertex);
     void play_move(int vertex);
     bool play_textmove(std::string color, const std::string& vertex);
-    bool game_started() { return !game_history.empty(); }
+    bool game_started() { return game_history.size() > 1; }
 
     void start_clock(int color);
     void stop_clock(int color);
