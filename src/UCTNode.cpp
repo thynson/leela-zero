@@ -262,13 +262,16 @@ float UCTNode::get_eval_lcb(int color) const {
 }
 
 float UCTNode::get_raw_eval(int tomove, int virtual_loss) const {
-    auto visits = get_visits() + virtual_loss;
+    auto visits = float(get_visits());
     assert(visits > 0);
     auto blackeval = get_blackevals();
+
+    auto virtual_loss_effect = std::sqrt(float(virtual_loss)); 
+    visits += virtual_loss_effect;
     if (tomove == FastBoard::WHITE) {
-        blackeval += static_cast<double>(virtual_loss);
+        blackeval += virtual_loss_effect;
     }
-    auto eval = static_cast<float>(blackeval / double(visits));
+    auto eval = static_cast<float>(blackeval / visits);
     if (tomove == FastBoard::WHITE) {
         eval = 1.0f - eval;
     }
