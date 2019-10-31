@@ -198,6 +198,11 @@ void UCTNode::virtual_loss() {
     m_virtual_loss += VIRTUAL_LOSS_COUNT;
 }
 
+double UCTNode::get_virtual_visits() const
+{
+    return get_visits() + std::sqrt(2.0 * m_virtual_loss.load());
+}
+
 void UCTNode::virtual_loss_undo() {
     m_virtual_loss -= VIRTUAL_LOSS_COUNT;
 }
@@ -280,7 +285,7 @@ float UCTNode::get_raw_eval(int tomove, int virtual_loss) const {
     return eval;
 }
 
-double UCTNode::get_raw_eval_sum(int tomove) const {
+double UCTNode::get_eval_accum(int tomove) const {
     double result = get_blackevals();
     if (tomove == FastBoard::WHITE) {
         result = m_policy_sum - result;
@@ -318,24 +323,24 @@ UCTNode* UCTNode::uct_select_child(int color, bool is_root) {
     wait_expanded();
 
     // Count parentvisits manually to avoid issues with transpositions.
-//    auto total_visited_policy = 0.0f;
-//    auto parentvisits = size_t{0};
-    auto numerator = sqrt(get_policy_sum()) - 1.0; // ensure
-//    for (const auto& child : m_children) {
-//        if (child.valid()) {
-//            parentvisits += child.get_visits();
-//            if (child.get_visits() > 0) {
-//                total_visited_policy += child.get_policy();
-////                numerator += child.get_visits() - child.get_policy_sum();
-//            }
-//        }
-//    }
+    auto total_visited_policy = 0.0f;
+    auto parentvisits = size_t{0};
+//    auto numerator = sqrt(get_policy_sum()) - 1.0; // ensure
+    for (const auto& child : m_children) {
+        if (child.valid()) {
+            parentvisits += child.get_visits();
+            if (child.get_visits() > 0) {
+                total_visited_policy += child.get_policy();
+//                numerator += child.get_visits() - child.get_policy_sum();
+            }
+        }
+    }
 
-//    numerator = sqrt(numerator);
-//    const auto fpu_reduction = (is_root ? cfg_fpu_root_reduction : cfg_fpu_reduction)
-//            * total_visited_policy * total_visited_policy;
+    auto numerator = sqrt(parentvisits);
+    const auto fpu_reduction = (is_root ? cfg_fpu_root_reduction : cfg_fpu_reduction)
+            * total_visited_policy * total_visited_policy;
     // Estimated eval for unknown nodes = original parent NN eval - reduction
-//    const auto fpu_eval = get_net_eval(color) - fpu_reduction;
+    const auto fpu_eval = get_net_eval(color) - fpu_reduction;
 
     auto best = static_cast<UCTNodePointer*>(nullptr);
     auto best_value = std::numeric_limits<double>::lowest();
@@ -345,15 +350,15 @@ UCTNode* UCTNode::uct_select_child(int color, bool is_root) {
             continue;
         }
 
-        auto winrate = 0;
+        auto winrate = fpu_eval;
         auto denom = 1.0; //1.0;//(1.0 - get_policy() + child.get_policy_sum());
         if (child.is_inflated() && child->m_expand_state.load() == ExpandState::EXPANDING) {
             // Someone else is expanding this node, never select it
             // if we can avoid so, because we'd block on it.
             winrate = -1.0f;
         } else if (child.get_visits() > 0) {
-            winrate = child.get_eval(color);
-            denom += child.get_policy_sum() - 1.0;
+            winrate = child.get_raw_eval(color);
+            denom += child.get_virtual_visits();
 //        } else {
 
 //            denom += 1.0 - child.get_policy();

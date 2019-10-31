@@ -131,6 +131,11 @@ int UCTNodePointer::get_visits() const {
     if (is_inflated(v)) return read_ptr(v)->get_visits();
     return 0;
 }
+double UCTNodePointer::get_virtual_visits() const {
+    auto v = m_data.load();
+    if (is_inflated(v)) return read_ptr(v)->get_virtual_visits();
+    return 0.0;
+}
 
 double UCTNodePointer::get_policy_sum() const {
 
@@ -142,7 +147,13 @@ double UCTNodePointer::get_policy_sum() const {
 double UCTNodePointer::get_raw_eval_sum(int tomove) const {
 
     auto v = m_data.load();
-    if (is_inflated(v)) return read_ptr(v)->get_raw_eval_sum(tomove);
+    if (is_inflated(v)) return read_ptr(v)->get_eval_accum(tomove);
+    return 0.0;
+}
+double UCTNodePointer::get_raw_eval(int tomove) const {
+
+    auto v = m_data.load();
+    if (is_inflated(v)) return read_ptr(v)->get_raw_eval(tomove, 0);
     return 0.0;
 }
 
